@@ -162,6 +162,7 @@ class _ReportPDF(FPDF):
         self._cover(report)
         self._exam_metadata(report)
         self._series_table(report.series_summaries)
+        self.add_page()
         self._section_header("3. DETAILED FINDINGS")
 
         for sec in report.analysis.sections:
@@ -301,21 +302,41 @@ class _ReportPDF(FPDF):
             idx = len(slices) // 2
         return io.BytesIO(base64.b64decode(slices[idx]))
 
+    def _estimate_card_height(self, section: Section, text_w: float) -> float:
+        h = 14  # header + gap
+        for sub in section.subsections:
+            h += self._count_lines(_clean(sub.title), text_w - 8, 5) * 5 + 3
+            for f in sub.findings:
+                h += self._count_lines(_clean(f), text_w - 17, 5) * 5 + 1
+            h += 2
+        if section.reasoning:
+            lines = self._count_lines(_clean(section.reasoning), text_w - 20, 5)
+            h += lines * 5 + 12
+        if section.notes:
+            total = sum(self._count_lines(_clean(n), text_w - 20, 5) for n in section.notes)
+            h += total * 5 + len(section.notes) * 2 + 12
+        return h
+
     def _section_card(self, section: Section, img_buf: io.BytesIO | None) -> None:
         colour   = _STATUS_COLOUR.get(section.status, _ACCENT_BLUE)
-        bg_card  = _STATUS_BG.get(section.status, _CARD_BG)
         label    = _STATUS_LABEL.get(section.status, "See findings")
         img_size = 44
 
-        text_w = self.epw - (img_size + 6 if img_buf else 0)
+        text_w    = self.epw - (img_size + 6 if img_buf else 0)
+        est_h     = self._estimate_card_height(section, text_w)
+        min_h     = max(est_h, img_size + 8 if img_buf else est_h)
 
-        if self.get_y() + (img_size + 6 if img_buf else 20) > 272:
+        # Page break — keep entire card together
+        if self.get_y() + min_h > 272:
             self.add_page()
 
-        start_page = self.page
-        y_start    = self.get_y()
+        y_start = self.get_y()
 
-        # Card header row
+        # Card body background (drawn first, single pass)
+        self.set_fill_color(*_CARD_BG)
+        self.rect(self.M, y_start + 10, text_w, max(min_h - 10, 20), "F")
+
+        # Card header
         self.set_fill_color(*_CARD_HDR)
         self.rect(self.M, y_start, text_w, 10, "F")
         self.set_xy(self.M + 6, y_start + 1)
@@ -327,62 +348,38 @@ class _ReportPDF(FPDF):
         self.cell(50, 8, label, align="R", ln=True)
         self.ln(2)
 
-        # Card body background
-        body_y = self.get_y()
-
-        # Sub-sections
+        # Content — single pass, no re-render
         for sub in section.subsections:
             self._render_subsection(sub, text_w)
-
-        # Reasoning
         if section.reasoning:
             self._render_reasoning(section.reasoning, text_w)
-
-        # Notes
         if section.notes:
             self._render_notes(section.notes, text_w)
 
         y_end = self.get_y() + 2
 
-        # Fill card body bg after we know the height
-        if self.page == start_page:
-            self.set_fill_color(*_CARD_BG)
-            self.rect(self.M, body_y - 1, text_w, y_end - body_y + 2, "F")
-            # Re-render text on top of background
-            self.set_y(body_y)
-            for sub in section.subsections:
-                self._render_subsection(sub, text_w)
-            if section.reasoning:
-                self._render_reasoning(section.reasoning, text_w)
-            if section.notes:
-                self._render_notes(section.notes, text_w)
-            self.set_y(y_end)
-
-        # DICOM image with white border (same page only)
-        if img_buf and self.page == start_page:
+        # DICOM image
+        if img_buf:
             img_x = self.M + text_w + 4
             img_y = y_start + max(0, (y_end - y_start - img_size) / 2)
             if img_y + img_size > 272:
-                img_y = y_start
-            # White background frame for the grayscale scan
+                img_y = y_start + 12
             pad = 2
             self.set_fill_color(*_WHITE)
             self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "F")
             self.image(img_buf, x=img_x, y=img_y, w=img_size, h=img_size)
-            # Subtle border
             self.set_draw_color(*_IMG_BORDER)
             self.set_line_width(0.3)
             self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "D")
             self.set_line_width(0.2)
             y_end = max(y_end, img_y + img_size + pad + 2)
 
-        # Left accent bar
-        if self.page == start_page:
-            self.set_fill_color(*colour)
-            self.rect(self.M, y_start, 3, y_end - y_start, "F")
+        # Left accent bar — drawn last so it sits on top
+        self.set_fill_color(*colour)
+        self.rect(self.M, y_start, 3, y_end - y_start, "F")
 
         self.set_y(y_end)
-        self.ln(5)
+        self.ln(4)
 
     def _render_subsection(self, sub, text_w: float) -> None:
         x = self.M + 6
@@ -621,12 +618,7 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ helpers
 
-    def _section_header(self, text: str, min_follow: float = 40) -> None:
-        # Never orphan a header — if there isn't enough room for the header
-        # plus at least min_follow mm of content, start a new page first.
-        if self.get_y() + 9 + min_follow > 272:
-            self.add_page()
-
+    def _section_header(self, text: str) -> None:
         self.set_fill_color(*_CARD_HDR)
         self.set_text_color(*_ACCENT_BLUE)
         self.set_font("Helvetica", "B", 10)
