@@ -160,8 +160,9 @@ class _ReportPDF(FPDF):
         self._series_table(report.series_summaries)
         self._section_header("3. DETAILED FINDINGS")
 
-        for sec in report.analysis.sections:
-            self._section_card(sec, report.encoded_images)
+        slice_assignments = self._assign_slices(report.analysis.sections, report.encoded_images)
+        for i, sec in enumerate(report.analysis.sections):
+            self._section_card(sec, slice_assignments.get(i))
 
         self._summary_section(report.analysis.summary)
         self._clinical_answer(report.analysis.clinical_answer)
@@ -269,18 +270,33 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ section card
 
-    def _section_card(self, section: Section, encoded_images: dict[str, list[str]]) -> None:
+    def _assign_slices(self, sections: list[Section], encoded_images: dict[str, list[str]]) -> dict[int, io.BytesIO]:
+        from collections import defaultdict
+        series_to_sections: dict[str, list[int]] = defaultdict(list)
+        section_to_series: dict[int, str] = {}
+
+        for i, sec in enumerate(sections):
+            key = self._match_series(sec, encoded_images)
+            if key:
+                series_to_sections[key].append(i)
+                section_to_series[i] = key
+
+        assignments: dict[int, io.BytesIO] = {}
+        for key, indices in series_to_sections.items():
+            slices = encoded_images[key]
+            n = len(indices)
+            for j, sec_idx in enumerate(indices):
+                # Spread evenly through the slice stack: 1/(n+1), 2/(n+1), ...
+                slice_idx = int((j + 1) / (n + 1) * len(slices))
+                assignments[sec_idx] = io.BytesIO(base64.b64decode(slices[slice_idx]))
+
+        return assignments
+
+    def _section_card(self, section: Section, img_buf: io.BytesIO | None) -> None:
         colour = _STATUS_COLOUR.get(section.status, _BLUE_MID)
         bg     = _STATUS_BG.get(section.status, _BLUE_LIGHT)
-        label  = _STATUS_LABEL.get(section.status, "See findings")
-
-        # Resolve image
-        img_buf  = None
+        label    = _STATUS_LABEL.get(section.status, "See findings")
         img_size = 44
-        img_key  = self._match_series(section, encoded_images)
-        if img_key:
-            slices  = encoded_images[img_key]
-            img_buf = io.BytesIO(base64.b64decode(slices[len(slices) // 2]))
 
         text_w = self.epw - (img_size + 5 if img_buf else 0)
 
