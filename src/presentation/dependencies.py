@@ -1,9 +1,11 @@
 """Singletons — all dependency instances are created and held here."""
 
+import json
 import os
 
 from openai import OpenAI
 
+from src.application.entities.analysis_result import AnalysisResult
 from src.application.services.analysis_service import AnalysisService
 from src.infrastructure.dicom_reader import DicomReader
 from src.infrastructure.image_encoder import ImageEncoder
@@ -26,7 +28,8 @@ def get_openai_client() -> OpenAIClient:
     global _openai_client
     if _openai_client is None:
         _openai_client = OpenAIClient(
-            client=OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+            client=OpenAI(api_key=os.environ["OPENAI_API_KEY"]),
+            output_schema=json.dumps(AnalysisResult.model_json_schema(), indent=2),
         )
     return _openai_client
 

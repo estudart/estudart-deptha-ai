@@ -334,6 +334,10 @@ class _ReportPDF(FPDF):
         for sub in section.subsections:
             self._render_subsection(sub, text_w)
 
+        # Reasoning
+        if section.reasoning:
+            self._render_reasoning(section.reasoning, text_w)
+
         # Notes
         for note in section.notes:
             self._render_note(note, text_w)
@@ -348,6 +352,8 @@ class _ReportPDF(FPDF):
             self.set_y(body_y)
             for sub in section.subsections:
                 self._render_subsection(sub, text_w)
+            if section.reasoning:
+                self._render_reasoning(section.reasoning, text_w)
             for note in section.notes:
                 self._render_note(note, text_w)
             self.set_y(y_end)
@@ -395,6 +401,18 @@ class _ReportPDF(FPDF):
 
         self.ln(2)
 
+    def _render_reasoning(self, reasoning: str, text_w: float) -> None:
+        x = self.M + 6
+        self.set_x(x)
+        self.set_font("Helvetica", "B", 7.5)
+        self.set_text_color(*_TEXT_LABEL)
+        self.cell(text_w - 8, 4, "REASONING", ln=True)
+        self.set_x(x)
+        self.set_font("Helvetica", "I", 8.5)
+        self.set_text_color(*_TEXT_SECONDARY)
+        self.multi_cell(text_w - 8, 5, _clean(reasoning), fill=False)
+        self.ln(2)
+
     def _render_note(self, note: str, text_w: float) -> None:
         x = self.M + 6
         self.set_x(x + 4)
@@ -408,22 +426,48 @@ class _ReportPDF(FPDF):
     def _summary_section(self, items: list[SummaryItem]) -> None:
         self._section_header("4. SUMMARY OF FINDINGS")
 
-        for item in items:
+        pill_w  = 20
+        lbl_w   = 55
+        text_w  = self.epw - pill_w - lbl_w
+        line_h  = 5.5
+
+        for idx, item in enumerate(items):
             colour = _STATUS_COLOUR.get(item.status, _ACCENT_BLUE)
             bg     = _STATUS_BG.get(item.status, _CARD_BG)
+            row_y  = self.get_y()
 
-            self.set_x(self.M)
+            # Pre-measure value height
+            self.set_font("Helvetica", "", 9)
+            lines  = self._count_lines(_clean(item.text), text_w, line_h)
+            row_h  = max(lines * line_h + 4, 10)
+
+            # Backgrounds
             self.set_fill_color(*bg)
-            self.set_font("Helvetica", "B", 8)
+            self.rect(self.M, row_y, pill_w, row_h, "F")
+            alt = _CARD_BG if idx % 2 == 0 else _CARD_HDR
+            self.set_fill_color(*alt)
+            self.rect(self.M + pill_w, row_y, lbl_w, row_h, "F")
+            self.rect(self.M + pill_w + lbl_w, row_y, text_w, row_h, "F")
+
+            # Status pill (vertically centred)
+            self.set_xy(self.M, row_y + (row_h - 4) / 2 - 1)
+            self.set_font("Helvetica", "B", 7.5)
             self.set_text_color(*colour)
-            self.cell(22, 7, _STATUS_LABEL[item.status][:6].upper(), border=0, fill=True, align="C")
-            self.set_fill_color(*_CARD_BG)
+            self.cell(pill_w, 4, _STATUS_LABEL[item.status][:6].upper(), align="C")
+
+            # Label (vertically centred)
+            self.set_xy(self.M + pill_w + 2, row_y + (row_h - 4) / 2 - 1)
             self.set_font("Helvetica", "B", 9)
             self.set_text_color(*_TEXT_PRIMARY)
-            self.cell(48, 7, _clean(item.label), fill=True)
+            self.cell(lbl_w - 2, 4, _clean(item.label))
+
+            # Value text
+            self.set_xy(self.M + pill_w + lbl_w + 3, row_y + 2)
             self.set_font("Helvetica", "", 9)
             self.set_text_color(*_TEXT_SECONDARY)
-            self.multi_cell(self.epw - 70, 7, _clean(item.text), fill=True)
+            self.multi_cell(text_w - 6, line_h, _clean(item.text))
+
+            self.set_y(row_y + row_h)
 
         self.ln(4)
 
@@ -438,21 +482,58 @@ class _ReportPDF(FPDF):
             ("Confidence",         answer.confidence),
             ("Limiting factors",   answer.limiting_factors),
         ]
-        lbl_w = 38
+        lbl_w  = 38
+        val_w  = self.epw - lbl_w
+        line_h = 5.5
 
-        for label, value in rows:
-            self.set_x(self.M)
-            self.set_fill_color(*_CARD_HDR)
+        for idx, (label, value) in enumerate(rows):
+            row_y = self.get_y()
+
+            # Measure how tall the value will be
+            self.set_font("Helvetica", "", 9)
+            # Use a throw-away multi_cell in dry-run to count lines
+            lines = self._count_lines(_clean(value), val_w, line_h)
+            row_h = max(lines * line_h + 4, 10)
+
+            # Label background
+            lbl_c = _CARD_HDR if idx % 2 == 0 else (35, 35, 50)
+            self.set_fill_color(*lbl_c)
+            self.rect(self.M, row_y, lbl_w, row_h, "F")
+
+            # Value background
+            val_c = _CARD_BG if idx % 2 == 0 else (26, 26, 38)
+            self.set_fill_color(*val_c)
+            self.rect(self.M + lbl_w, row_y, val_w, row_h, "F")
+
+            # Label text (vertically centred)
+            self.set_xy(self.M + 3, row_y + (row_h - 4) / 2 - 1)
             self.set_font("Helvetica", "B", 8)
             self.set_text_color(*_TEXT_LABEL)
-            self.cell(lbl_w, 7, label, border=0, fill=True)
+            self.cell(lbl_w - 3, 4, label)
 
-            self.set_fill_color(*_CARD_BG)
+            # Value text
+            self.set_xy(self.M + lbl_w + 3, row_y + 2)
             self.set_font("Helvetica", "", 9)
             self.set_text_color(*_TEXT_PRIMARY)
-            self.multi_cell(self.epw - lbl_w, 7, _clean(value), border=0, fill=True)
+            self.multi_cell(val_w - 6, line_h, _clean(value))
+
+            self.set_y(row_y + row_h)
 
         self.ln(4)
+
+    def _count_lines(self, text: str, width: float, line_h: float) -> int:
+        """Estimate number of lines multi_cell will produce for given width."""
+        self.set_font("Helvetica", "", 9)
+        words = text.split()
+        lines, current = 1, ""
+        for word in words:
+            test = (current + " " + word).strip()
+            if self.get_string_width(test) > width - 6:
+                lines += 1
+                current = word
+            else:
+                current = test
+        return lines
 
     # ------------------------------------------------------------------ flags
 
