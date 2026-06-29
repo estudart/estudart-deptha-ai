@@ -1,7 +1,10 @@
+import json
 import os
 from pathlib import Path
 
 from openai import OpenAI
+
+from src.application.entities.analysis_result import AnalysisResult
 
 
 class OpenAIClient:
@@ -14,7 +17,7 @@ class OpenAIClient:
         images_by_series: dict[str, list[str]],
         patient_context: str,
         prompt_path: Path | None = None,
-    ) -> str:
+    ) -> AnalysisResult:
         prompt = self._load_prompt(prompt_path)
         content = self._build_content(prompt, patient_context, images_by_series)
 
@@ -22,9 +25,12 @@ class OpenAIClient:
             model=self._model,
             messages=[{"role": "user", "content": content}],
             max_tokens=4096,
-            temperature=1
+            temperature=0,
+            response_format={"type": "json_object"},
         )
-        return response.choices[0].message.content
+
+        raw = response.choices[0].message.content
+        return AnalysisResult.model_validate(json.loads(raw))
 
     def _build_content(
         self,
@@ -32,10 +38,11 @@ class OpenAIClient:
         patient_context: str,
         images_by_series: dict[str, list[str]],
     ) -> list[dict]:
-        content: list[dict] = [{"type": "text", "text": prompt.format(patient_context=patient_context)}]
+        filled = prompt.replace("{patient_context}", patient_context)
+        content: list[dict] = [{"type": "text", "text": filled}]
 
         for label, b64_list in images_by_series.items():
-            content.append({"type": "text", "text": f"\n--- Série: {label} ---"})
+            content.append({"type": "text", "text": f"\n--- Series: {label} ---"})
             for b64 in b64_list:
                 content.append({
                     "type": "image_url",
@@ -47,21 +54,4 @@ class OpenAIClient:
     def _load_prompt(self, prompt_path: Path | None) -> str:
         if prompt_path and prompt_path.exists():
             return prompt_path.read_text(encoding="utf-8")
-        return self._default_prompt()
-
-    def _default_prompt(self) -> str:
-        return """
-            Você é um radiologista assistente especializado em RM musculoesquelética.
-
-            Contexto clínico:
-            {patient_context}
-
-            Analise as séries abaixo e produza um laudo estruturado com:
-            1. Estruturas visíveis por série
-            2. Achados relevantes (edema, rotura, derrame, alterações de sinal)
-            3. Correlação clínica com o contexto
-            4. Impressão diagnóstica
-            5. Recomendações
-
-            Use terminologia radiológica em português. Indique limitações de qualidade quando presentes.
-        """
+        raise FileNotFoundError(f"Prompt not found: {prompt_path}")

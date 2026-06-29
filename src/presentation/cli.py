@@ -45,4 +45,4 @@ class CLI:
         log.info(f"Report saved -> {output_dir}/report.md and {output_dir}/report.pdf")
 
         print("\n" + "=" * 60)
-        print(report.analysis)
+        print(report.analysis.model_dump_json(indent=2))

@@ -71,7 +71,7 @@ class AnalysisService:
 
             self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path))
             analysis = self._openai_client.call_vision(images, patient_context, prompt_path)
-            self._log.info("GPT-4o response received", response_chars=len(analysis))
+            self._log.info("GPT-4o response received", sections=len(analysis.sections))
 
             summaries = [
                 SeriesSummary(
