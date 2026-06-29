@@ -30,6 +30,12 @@ class OpenAIClient:
         )
 
         raw = response.choices[0].message.content
+        if not raw:
+            reason = response.choices[0].finish_reason
+            raise ValueError(
+                f"GPT-4o returned an empty response (finish_reason={reason!r}). "
+                "The image payload may be too large — try reducing --slices."
+            )
         return AnalysisResult.model_validate(json.loads(raw))
 
     def _build_content(
