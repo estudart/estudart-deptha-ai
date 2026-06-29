@@ -8,9 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.presentation.routes.magnetic_resonance import magnetic_resonance_router
 
 app = FastAPI(
-    title="Deptha",
+    title="DepthAI",
     description=(
-        "**Deptha** is an AI-assisted MRI analysis pipeline powered by GPT-4o vision.\n\n"
+        "**DepthAI** is an AI-assisted MRI analysis pipeline powered by GPT-4o vision.\n\n"
         "Upload a DICOM exam, provide clinical context, and receive a structured radiological "
         "report — complete with per-section findings cards, status badges, and embedded imaging evidence.\n\n"
         "---\n\n"
@@ -19,7 +19,7 @@ app = FastAPI(
     ),
     version="0.1.0",
     contact={
-        "name": "Deptha",
+        "name": "DepthAI",
     },
     license_info={
         "name": "Private — All rights reserved",

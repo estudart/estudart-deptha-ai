@@ -16,14 +16,14 @@ from src.application.entities.series_summary import SeriesSummary
 # ---------------------------------------------------------------------------
 
 _UNICODE_REPLACEMENTS = str.maketrans({
-    "—": "-", "–": "-",
-    "‘": "'", "’": "'",
-    "“": '"', "”": '"',
-    "…": "...",
-    "·": "-", "•": "-",
-    "→": "->", "✓": "OK",
-    "■": "#", "×": "x",
-    "\U0001f7e2": "", "\U0001f7e1": "", "\U0001f534": "",
+    ord("—"): "-", ord("–"): "-",
+    ord("‘"): "'", ord("’"): "'",
+    ord("“"): '"', ord("”"): '"',
+    ord("…"): "...",
+    ord("·"): "-", ord("•"): "-",
+    ord("→"): "->", ord("✓"): "OK",
+    ord("■"): "#", ord("×"): "x",
+    ord("\U0001f7e2"): "", ord("\U0001f7e1"): "", ord("\U0001f534"): "",
 })
 
 
@@ -35,23 +35,27 @@ def _clean(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Colours
+# Dark theme colours
 # ---------------------------------------------------------------------------
 
-_BLUE_DARK  = (22,  60, 120)
-_BLUE_MID   = (30,  90, 180)
-_BLUE_LIGHT = (235, 242, 255)
-_GREEN      = (25, 130,  70)
-_GREEN_BG   = (232, 248, 238)
-_ORANGE     = (200, 110,  15)
-_ORANGE_BG  = (255, 248, 235)
-_RED        = (180,  35,  35)
-_RED_BG     = (255, 235, 235)
-_DARK       = (25,   25,  25)
-_GREY_DARK  = (90,   90,  90)
-_GREY_MID   = (160, 160, 160)
-_GREY_LIGHT = (245, 245, 245)
+_PAGE_BG      = (18,  18,  26)   # deep charcoal background
+_CARD_BG      = (30,  30,  42)   # card body
+_CARD_HDR     = (40,  40,  58)   # card header stripe
+_ACCENT_BLUE  = (80, 140, 255)   # header accent / section labels
+
+_TEXT_PRIMARY   = (220, 220, 232)
+_TEXT_SECONDARY = (130, 130, 155)
+_TEXT_LABEL     = (90,  90, 120)
+
+_GREEN      = (50,  210, 100)
+_GREEN_BG   = (20,   55,  35)
+_ORANGE     = (255, 160,  50)
+_ORANGE_BG  = (60,   42,  15)
+_RED        = (255,  80,  80)
+_RED_BG     = (60,   18,  18)
+
 _WHITE      = (255, 255, 255)
+_IMG_BORDER = (200, 200, 215)   # subtle border around DICOM images
 
 _STATUS_COLOUR: dict[str, tuple] = {
     "normal":      _GREEN,
@@ -67,11 +71,6 @@ _STATUS_LABEL: dict[str, str] = {
     "normal":      "No significant finding",
     "attention":   "Attention",
     "significant": "Significant finding",
-}
-_SUMMARY_ICON: dict[str, str] = {
-    "normal":      "OK",
-    "attention":   "!!",
-    "significant": "!!",
 }
 
 
@@ -94,7 +93,7 @@ class Report:
 
     def _save_markdown(self, path: Path) -> None:
         lines = [
-            "# Deptha - MRI Report",
+            "# DepthAI - MRI Report",
             f"Generated: {self.generated_at.strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "## Clinical Context",
@@ -138,7 +137,7 @@ class Report:
 
 
 # ---------------------------------------------------------------------------
-# PDF renderer
+# PDF renderer — dark theme
 # ---------------------------------------------------------------------------
 
 class _ReportPDF(FPDF):
@@ -147,6 +146,11 @@ class _ReportPDF(FPDF):
     def normalize_text(self, text: str) -> str:
         s = text.translate(_UNICODE_REPLACEMENTS).encode("latin-1", errors="replace").decode("latin-1")
         return super().normalize_text(s)
+
+    def header(self) -> None:
+        # Fill entire page background on every new page
+        self.set_fill_color(*_PAGE_BG)
+        self.rect(0, 0, 210, 297, "F")
 
     # ------------------------------------------------------------------ build
 
@@ -171,26 +175,33 @@ class _ReportPDF(FPDF):
     # ------------------------------------------------------------------ cover
 
     def _cover(self, report: Report) -> None:
-        self.set_fill_color(*_BLUE_DARK)
-        self.rect(0, 0, 210, 46, "F")
+        # Top accent line
+        self.set_fill_color(*_ACCENT_BLUE)
+        self.rect(0, 0, 210, 3, "F")
 
-        self.set_xy(0, 9)
-        self.set_font("Helvetica", "B", 24)
-        self.set_text_color(*_WHITE)
-        self.cell(210, 13, "DEPTHA  -  MRI ANALYSIS REPORT", align="C", ln=True)
+        # Title block
+        self.set_xy(0, 10)
+        self.set_font("Helvetica", "B", 26)
+        self.set_text_color(*_TEXT_PRIMARY)
+        self.cell(210, 14, "DEPTHAI", align="C", ln=True)
 
-        self.set_font("Helvetica", "", 10)
-        self.set_text_color(170, 205, 255)
-        self.cell(210, 7, "AI-assisted analysis   |   Mandatory clinical review by a licensed radiologist", align="C", ln=True)
+        self.set_font("Helvetica", "", 11)
+        self.set_text_color(*_ACCENT_BLUE)
+        self.cell(210, 7, "MRI ANALYSIS REPORT", align="C", ln=True)
 
-        self.set_fill_color(*_BLUE_MID)
-        self.rect(0, 33, 210, 13, "F")
-        self.set_xy(0, 35)
+        self.ln(2)
+        self.set_fill_color(*_ACCENT_BLUE)
+        self.rect(self.M + 20, self.get_y(), self.epw - 40, 1, "F")
+        self.ln(5)
+
         self.set_font("Helvetica", "I", 9)
-        self.set_text_color(220, 235, 255)
-        self.cell(210, 7, f"Generated: {report.generated_at.strftime('%B %d, %Y   %H:%M')}", align="C")
+        self.set_text_color(*_TEXT_SECONDARY)
+        self.cell(210, 6, "AI-assisted analysis   |   Mandatory clinical review by a licensed radiologist", align="C", ln=True)
+        self.set_font("Helvetica", "", 8)
+        self.set_text_color(*_TEXT_LABEL)
+        self.cell(210, 6, f"Generated: {report.generated_at.strftime('%B %d, %Y   %H:%M')}", align="C", ln=True)
 
-        self.ln(22)
+        self.ln(14)
 
     # ------------------------------------------------------------------ exam metadata
 
@@ -199,22 +210,27 @@ class _ReportPDF(FPDF):
 
         self.set_x(self.M)
         self.set_font("Helvetica", "B", 8)
-        self.set_text_color(*_GREY_DARK)
+        self.set_text_color(*_TEXT_LABEL)
         self.cell(self.epw, 5, "CLINICAL CONTEXT", ln=True)
 
         ctx = _clean(report.patient_context)
         x, y = self.M, self.get_y()
-        self.set_fill_color(*_BLUE_LIGHT)
-        self.rect(x, y, self.epw, 1, "F")
-        self.set_xy(x + 3, y + 3)
+        self.set_xy(x + 4, y + 4)
         self.set_font("Helvetica", "", 9)
-        self.set_text_color(*_DARK)
-        self.multi_cell(self.epw - 6, 5, ctx, fill=False)
+        self.set_text_color(*_TEXT_PRIMARY)
+        self.multi_cell(self.epw - 8, 5, ctx, fill=False)
         bottom = self.get_y()
-        self.rect(x, y, self.epw, bottom - y + 3, "F")
-        self.set_xy(x + 3, y + 3)
-        self.multi_cell(self.epw - 6, 5, ctx)
-        self.set_y(bottom + 4)
+        box_h = bottom - y + 5
+
+        self.set_fill_color(*_CARD_BG)
+        self.rect(x, y, self.epw, box_h, "F")
+        self.set_fill_color(*_ACCENT_BLUE)
+        self.rect(x, y, 3, box_h, "F")
+        self.set_xy(x + 6, y + 4)
+        self.set_font("Helvetica", "", 9)
+        self.set_text_color(*_TEXT_PRIMARY)
+        self.multi_cell(self.epw - 10, 5, ctx)
+        self.set_y(y + box_h + 4)
 
         fields = [
             ("Series analysed", str(len(report.series_summaries))),
@@ -226,14 +242,14 @@ class _ReportPDF(FPDF):
 
         self.set_x(self.M)
         for label, value in fields:
-            self.set_fill_color(*_GREY_LIGHT)
+            self.set_fill_color(*_CARD_HDR)
             self.set_font("Helvetica", "", 8)
-            self.set_text_color(*_GREY_DARK)
-            self.cell(col_lbl, 8, label, border=1, fill=True)
-            self.set_fill_color(*_WHITE)
+            self.set_text_color(*_TEXT_LABEL)
+            self.cell(col_lbl, 8, label, border=0, fill=True)
+            self.set_fill_color(*_CARD_BG)
             self.set_font("Helvetica", "B", 9)
-            self.set_text_color(*_DARK)
-            self.cell(col_val, 8, value, border=1, fill=True)
+            self.set_text_color(*_TEXT_PRIMARY)
+            self.cell(col_val, 8, value, border=0, fill=True)
 
         self.ln(10)
 
@@ -247,22 +263,22 @@ class _ReportPDF(FPDF):
 
         self.set_x(self.M)
         self.set_font("Helvetica", "B", 9)
-        self.set_fill_color(*_BLUE_DARK)
-        self.set_text_color(*_WHITE)
+        self.set_fill_color(*_CARD_HDR)
+        self.set_text_color(*_ACCENT_BLUE)
         for i, h in enumerate(headers):
-            self.cell(cw[i], 8, h, border=1, fill=True, align="C")
+            self.cell(cw[i], 8, h, border=0, fill=True, align="C")
         self.ln()
 
         self.set_font("Helvetica", "", 9)
-        self.set_text_color(*_DARK)
+        self.set_text_color(*_TEXT_PRIMARY)
         for idx, s in enumerate(summaries):
             self.set_x(self.M)
-            fill = idx % 2 == 0
-            self.set_fill_color(*(_BLUE_LIGHT if fill else _WHITE))
-            self.cell(cw[0], 7, _clean(s.label[:56]), border=1, fill=fill)
-            self.cell(cw[1], 7, str(s.slices_total),    border=1, fill=fill, align="C")
-            self.cell(cw[2], 7, str(s.slices_analysed), border=1, fill=fill, align="C")
-            self.cell(cw[3], 7, s.modality,             border=1, fill=fill, align="C")
+            fill_c = _CARD_BG if idx % 2 == 0 else _CARD_HDR
+            self.set_fill_color(*fill_c)
+            self.cell(cw[0], 7, _clean(s.label[:56]), border=0, fill=True)
+            self.cell(cw[1], 7, str(s.slices_total),    border=0, fill=True, align="C")
+            self.cell(cw[2], 7, str(s.slices_analysed), border=0, fill=True, align="C")
+            self.cell(cw[3], 7, s.modality,             border=0, fill=True, align="C")
             self.ln()
 
         self.ln(5)
@@ -286,50 +302,73 @@ class _ReportPDF(FPDF):
         return io.BytesIO(base64.b64decode(slices[idx]))
 
     def _section_card(self, section: Section, img_buf: io.BytesIO | None) -> None:
-        colour = _STATUS_COLOUR.get(section.status, _BLUE_MID)
-        bg     = _STATUS_BG.get(section.status, _BLUE_LIGHT)
+        colour   = _STATUS_COLOUR.get(section.status, _ACCENT_BLUE)
+        bg_card  = _STATUS_BG.get(section.status, _CARD_BG)
         label    = _STATUS_LABEL.get(section.status, "See findings")
         img_size = 44
 
-        text_w = self.epw - (img_size + 5 if img_buf else 0)
+        text_w = self.epw - (img_size + 6 if img_buf else 0)
 
-        # Page break guard
         if self.get_y() + (img_size + 6 if img_buf else 20) > 272:
             self.add_page()
 
         start_page = self.page
         y_start    = self.get_y()
 
-        # Card header
-        self.set_fill_color(*bg)
+        # Card header row
+        self.set_fill_color(*_CARD_HDR)
         self.rect(self.M, y_start, text_w, 10, "F")
-        self.set_xy(self.M + 5, y_start + 1)
+        self.set_xy(self.M + 6, y_start + 1)
         self.set_font("Helvetica", "B", 10)
-        self.set_text_color(*_BLUE_DARK)
-        self.cell(text_w - 52, 8, _clean(section.title))
+        self.set_text_color(*_TEXT_PRIMARY)
+        self.cell(text_w - 55, 8, _clean(section.title))
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(*colour)
-        self.cell(47, 8, label, align="R", ln=True)
+        self.cell(50, 8, label, align="R", ln=True)
         self.ln(2)
+
+        # Card body background
+        body_y = self.get_y()
 
         # Sub-sections
         for sub in section.subsections:
             self._render_subsection(sub, text_w)
 
-        # Notes (blockquote callouts)
+        # Notes
         for note in section.notes:
             self._render_note(note, text_w)
 
         y_end = self.get_y() + 2
 
-        # Image (same page only)
+        # Fill card body bg after we know the height
+        if self.page == start_page:
+            self.set_fill_color(*_CARD_BG)
+            self.rect(self.M, body_y - 1, text_w, y_end - body_y + 2, "F")
+            # Re-render text on top of background
+            self.set_y(body_y)
+            for sub in section.subsections:
+                self._render_subsection(sub, text_w)
+            for note in section.notes:
+                self._render_note(note, text_w)
+            self.set_y(y_end)
+
+        # DICOM image with white border (same page only)
         if img_buf and self.page == start_page:
-            img_x = self.M + text_w + 3
+            img_x = self.M + text_w + 4
             img_y = y_start + max(0, (y_end - y_start - img_size) / 2)
             if img_y + img_size > 272:
                 img_y = y_start
+            # White background frame for the grayscale scan
+            pad = 2
+            self.set_fill_color(*_WHITE)
+            self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "F")
             self.image(img_buf, x=img_x, y=img_y, w=img_size, h=img_size)
-            y_end = max(y_end, img_y + img_size + 2)
+            # Subtle border
+            self.set_draw_color(*_IMG_BORDER)
+            self.set_line_width(0.3)
+            self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "D")
+            self.set_line_width(0.2)
+            y_end = max(y_end, img_y + img_size + pad + 2)
 
         # Left accent bar
         if self.page == start_page:
@@ -340,18 +379,16 @@ class _ReportPDF(FPDF):
         self.ln(5)
 
     def _render_subsection(self, sub, text_w: float) -> None:
-        x = self.M + 5
+        x = self.M + 6
 
-        # Sub-section title
         self.set_x(x)
         self.set_font("Helvetica", "B", 9)
-        self.set_text_color(*_BLUE_DARK)
+        self.set_text_color(*_ACCENT_BLUE)
         self.multi_cell(text_w - 8, 5, _clean(sub.title))
         self.ln(1)
 
-        # Findings
         self.set_font("Helvetica", "", 9)
-        self.set_text_color(*_DARK)
+        self.set_text_color(*_TEXT_PRIMARY)
         for finding in sub.findings:
             self.set_x(x + 2)
             self.multi_cell(text_w - 10, 5, f"  -  {_clean(finding)}")
@@ -359,12 +396,11 @@ class _ReportPDF(FPDF):
         self.ln(2)
 
     def _render_note(self, note: str, text_w: float) -> None:
-        x = self.M + 5
+        x = self.M + 6
         self.set_x(x + 4)
         self.set_font("Helvetica", "I", 9)
-        self.set_text_color(*_GREY_DARK)
-        self.set_fill_color(*_GREY_LIGHT)
-        self.multi_cell(text_w - 12, 5, _clean(note), fill=True)
+        self.set_text_color(*_TEXT_SECONDARY)
+        self.multi_cell(text_w - 14, 5, _clean(note), fill=False)
         self.ln(1)
 
     # ------------------------------------------------------------------ summary
@@ -373,22 +409,21 @@ class _ReportPDF(FPDF):
         self._section_header("4. SUMMARY OF FINDINGS")
 
         for item in items:
-            colour = _STATUS_COLOUR.get(item.status, _BLUE_MID)
-            bg     = _STATUS_BG.get(item.status, _BLUE_LIGHT)
+            colour = _STATUS_COLOUR.get(item.status, _ACCENT_BLUE)
+            bg     = _STATUS_BG.get(item.status, _CARD_BG)
 
             self.set_x(self.M)
             self.set_fill_color(*bg)
-            # Status pill
             self.set_font("Helvetica", "B", 8)
             self.set_text_color(*colour)
             self.cell(22, 7, _STATUS_LABEL[item.status][:6].upper(), border=0, fill=True, align="C")
-            # Label
+            self.set_fill_color(*_CARD_BG)
             self.set_font("Helvetica", "B", 9)
-            self.set_text_color(*_DARK)
-            self.cell(48, 7, _clean(item.label))
-            # Text
+            self.set_text_color(*_TEXT_PRIMARY)
+            self.cell(48, 7, _clean(item.label), fill=True)
             self.set_font("Helvetica", "", 9)
-            self.multi_cell(self.epw - 70, 7, _clean(item.text))
+            self.set_text_color(*_TEXT_SECONDARY)
+            self.multi_cell(self.epw - 70, 7, _clean(item.text), fill=True)
 
         self.ln(4)
 
@@ -396,10 +431,6 @@ class _ReportPDF(FPDF):
 
     def _clinical_answer(self, answer) -> None:
         self._section_header("5. DIRECT ANSWER TO CLINICAL QUESTION")
-
-        x = self.M
-        self.set_fill_color(*_BLUE_LIGHT)
-        y = self.get_y()
 
         rows = [
             ("Clinical question", answer.question),
@@ -410,27 +441,16 @@ class _ReportPDF(FPDF):
         lbl_w = 38
 
         for label, value in rows:
-            self.set_x(x)
+            self.set_x(self.M)
+            self.set_fill_color(*_CARD_HDR)
             self.set_font("Helvetica", "B", 8)
-            self.set_text_color(*_GREY_DARK)
-            self.set_fill_color(*_GREY_LIGHT)
-            row_y = self.get_y()
+            self.set_text_color(*_TEXT_LABEL)
+            self.cell(lbl_w, 7, label, border=0, fill=True)
 
-            # Measure value height
+            self.set_fill_color(*_CARD_BG)
             self.set_font("Helvetica", "", 9)
-            self.set_text_color(*_DARK)
-
-            # Draw label cell background
-            self.set_fill_color(*_GREY_LIGHT)
-            self.set_font("Helvetica", "B", 8)
-            self.set_text_color(*_GREY_DARK)
-            self.cell(lbl_w, 7, label, border=1, fill=True)
-
-            # Value
-            self.set_fill_color(*_WHITE)
-            self.set_font("Helvetica", "", 9)
-            self.set_text_color(*_DARK)
-            self.multi_cell(self.epw - lbl_w, 7, _clean(value), border=1, fill=True)
+            self.set_text_color(*_TEXT_PRIMARY)
+            self.multi_cell(self.epw - lbl_w, 7, _clean(value), border=0, fill=True)
 
         self.ln(4)
 
@@ -441,33 +461,39 @@ class _ReportPDF(FPDF):
 
         for flag in flags:
             self.set_x(self.M + 4)
+            self.set_fill_color(*_CARD_BG)
             self.set_font("Helvetica", "", 9)
-            self.set_text_color(*_DARK)
-            self.multi_cell(self.epw - 4, 6, f"  -  {_clean(flag)}")
+            self.set_text_color(*_TEXT_PRIMARY)
+            self.multi_cell(self.epw - 4, 6, f"  -  {_clean(flag)}", fill=True)
 
         self.ln(4)
 
     # ------------------------------------------------------------------ helpers
 
     def _section_header(self, text: str) -> None:
-        self.set_fill_color(*_BLUE_DARK)
-        self.set_text_color(*_WHITE)
+        self.set_fill_color(*_CARD_HDR)
+        self.set_text_color(*_ACCENT_BLUE)
         self.set_font("Helvetica", "B", 10)
         self.set_x(self.M)
-        self.cell(self.epw, 9, f"  {text}", fill=True, ln=True)
+        # Accent side bar on header
+        bar_y = self.get_y()
+        self.cell(self.epw, 9, f"    {text}", fill=True, ln=True)
+        self.set_fill_color(*_ACCENT_BLUE)
+        self.rect(self.M, bar_y, 3, 9, "F")
         self.ln(4)
 
     def _legal_footer(self) -> None:
         self.ln(6)
-        self.set_draw_color(*_GREY_DARK)
+        self.set_draw_color(*_TEXT_LABEL)
+        self.set_line_width(0.2)
         self.line(self.M, self.get_y(), 210 - self.M, self.get_y())
         self.ln(3)
         self.set_x(self.M)
         self.set_font("Helvetica", "I", 7.5)
-        self.set_text_color(*_GREY_DARK)
+        self.set_text_color(*_TEXT_LABEL)
         self.multi_cell(
             self.epw, 4.5,
-            "This report was generated with AI assistance (Deptha / GPT-4o) based on direct analysis "
+            "This report was generated with AI assistance (DepthAI / GPT-4o) based on direct analysis "
             "of DICOM images and clinical context provided by the user. It does NOT replace an official "
             "radiological report issued by a licensed radiologist, nor a clinical examination. "
             "All clinical decisions must be made exclusively by the responsible physician.",

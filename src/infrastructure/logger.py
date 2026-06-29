@@ -5,7 +5,7 @@ import sys
 class Logger:
     """Structured application logger. One instance per process via the singleton in dependencies.py."""
 
-    def __init__(self, name: str = "deptha", level: int = logging.INFO) -> None:
+    def __init__(self, name: str = "depthai", level: int = logging.INFO) -> None:
         self._log = logging.getLogger(name)
         if not self._log.handlers:
             handler = logging.StreamHandler(sys.stdout)
