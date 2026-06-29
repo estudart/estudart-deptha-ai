@@ -106,9 +106,11 @@ Use this exact schema:
 **best_slice_index** — the 0-based index of the specific slice (within the chosen series) that most clearly demonstrated the key finding you are describing. You saw the slices in order — pick the one that best supports this section's findings. If you cannot determine a best slice, omit this field.
 
 **Required sections** (always include all, in this order):
-1. Ligaments
-2. Menisci
-3. Articular Cartilage
-4. Subchondral Bone and Bone Marrow
-5. Periarticular Structures
-6. Joint Fluid and Synovium
+1. Ligaments — best seen on **sagittal** sequences (ACL, PCL)
+2. Menisci — best seen on **coronal** sequences (body/extrusion) and sagittal (horns)
+3. Articular Cartilage — best seen on **sagittal** sequences
+4. Subchondral Bone and Bone Marrow — best seen on **sagittal** sequences (T1 or T2)
+5. Periarticular Structures — best seen on **sagittal** or **axial** sequences
+6. Joint Fluid and Synovium — best seen on **axial** or coronal fluid-sensitive sequences
+
+For each section, choose `series_label` from the available series that matches the preferred plane above.
