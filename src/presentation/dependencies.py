@@ -16,7 +16,9 @@ _analysis_service: AnalysisService | None = None
 def get_openai_client() -> OpenAIClient:
     global _openai_client
     if _openai_client is None:
-        _openai_client = OpenAIClient(client=OpenAI(api_key=os.environ["OPENAI_API_KEY"]))
+        _openai_client = OpenAIClient(
+            client=OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        )
     return _openai_client
 
 

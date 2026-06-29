@@ -69,6 +69,7 @@ class AnalysisService:
                 patient_context=patient_context,
                 series_summaries=summaries,
                 analysis=analysis,
+                encoded_images=images,
             )
 
         finally:

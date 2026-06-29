@@ -1,3 +1,5 @@
+import base64
+import io
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -100,8 +102,11 @@ def _parse_sections(analysis: str) -> list[dict]:
         if re.match(r"^#{1,3} ", line):
             if current is not None:
                 sections.append(current)
-            title = re.sub(r"^#+\s*", "", line).strip()
-            current = {"title": title, "lines": []}
+            heading = re.sub(r"^#+\s*", "", line).strip()
+            tag_match = re.search(r"\[([^\]]+)\]\s*$", heading)
+            series = tag_match.group(1).strip() if tag_match else None
+            title = re.sub(r"\s*\[[^\]]+\]\s*$", "", heading).strip()
+            current = {"title": title, "series": series, "lines": []}
         elif current is not None:
             current["lines"].append(line)
 
@@ -109,7 +114,7 @@ def _parse_sections(analysis: str) -> list[dict]:
         sections.append(current)
 
     if not sections:
-        sections = [{"title": "Findings", "lines": analysis.splitlines()}]
+        sections = [{"title": "Findings", "series": None, "lines": analysis.splitlines()}]
 
     return sections
 
@@ -123,6 +128,7 @@ class Report:
     patient_context: str
     series_summaries: list[SeriesSummary]
     analysis: str
+    encoded_images: dict[str, list[str]] = field(default_factory=dict)
     generated_at: datetime = field(default_factory=datetime.now)
 
     def save_to_dir(self, output_dir: Path) -> None:
@@ -175,7 +181,7 @@ class _ReportPDF(FPDF):
         self._series_table(report.series_summaries)
         self._section_header("3. DETAILED FINDINGS")
         for section in _parse_sections(report.analysis):
-            self._section_card(section)
+            self._section_card(section, report.encoded_images)
         self._legal_footer()
 
     # ------------------------------------------------------------------ cover
@@ -285,13 +291,29 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ section card
 
-    def _section_card(self, section: dict) -> None:
-        title = _clean(section["title"])
-        lines = section["lines"]
+    def _section_card(self, section: dict, encoded_images: dict[str, list[str]] | None = None) -> None:
+        title     = _clean(section["title"])
+        lines     = section["lines"]
         full_text = " ".join(lines)
-        colour = _status_colour(full_text)
-        label  = _status_label(full_text)
+        colour    = _status_colour(full_text)
+        label     = _status_label(full_text)
 
+        # Resolve image for this section
+        img_buf  = None
+        img_size = 42  # mm — square thumbnail
+        series_key = section.get("series")
+        if encoded_images and series_key:
+            # fuzzy match: find first series whose label contains the tag
+            match = next(
+                (k for k in encoded_images if series_key.lower() in k.lower() or k.lower() in series_key.lower()),
+                None,
+            )
+            if match:
+                slices = encoded_images[match]
+                mid    = slices[len(slices) // 2]
+                img_buf = io.BytesIO(base64.b64decode(mid))
+
+        text_w = self.epw - (img_size + 4 if img_buf else 0)
         y_start = self.get_y()
 
         # Header bar
@@ -299,32 +321,42 @@ class _ReportPDF(FPDF):
         self.set_x(self.M + 4)
         self.set_font("Helvetica", "B", 10)
         self.set_text_color(*_BLUE_DARK)
-        title_w = self.epw - 50
-        self.cell(title_w, 8, title, fill=True)
+        self.cell(text_w - 50, 8, title, fill=True)
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(*colour)
         self.cell(46, 8, label, align="R", ln=True)
         self.ln(1)
 
-        # Body lines
+        # Body lines (constrained to text column width)
         for line in lines:
             if not line.strip():
                 self.ln(2)
                 continue
-            self._card_line(line)
+            self._card_line(line, max_w=text_w - 5)
 
         y_end = self.get_y() + 2
 
-        # Draw left accent bar over actual card height
+        # Embed image aligned to right of card, vertically centred
+        if img_buf:
+            img_x = self.M + text_w + 2
+            img_y = y_start + max(0, (y_end - y_start - img_size) / 2)
+            # ensure image fits on page
+            if img_y + img_size > 277:
+                img_y = y_start
+            self.image(img_buf, x=img_x, y=img_y, w=img_size, h=img_size)
+            y_end = max(y_end, img_y + img_size + 2)
+
+        # Left accent bar
         self.set_fill_color(*colour)
         self.rect(self.M, y_start, 3, y_end - y_start, "F")
 
+        self.set_y(y_end)
         self.ln(5)
 
-    def _card_line(self, raw: str) -> None:
+    def _card_line(self, raw: str, max_w: float | None = None) -> None:
         line = raw.strip()
         x = self.M + 5
-        w = self.epw - 5
+        w = (max_w if max_w is not None else self.epw) - 5
 
         # Blockquote: > text
         if line.startswith("> "):

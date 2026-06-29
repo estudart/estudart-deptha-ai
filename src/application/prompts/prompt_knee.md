@@ -55,6 +55,14 @@ These rules override standard signal grading when surgical history is present in
 
 The images provided are representative slices from a knee MRI exam, organized by series. Analyze each series in the context above and describe findings using standard radiological terminology.
 
+**IMPORTANT — section tagging**: Each `###` heading in your response must be followed by the exact series label (as provided in the image list) that best supports the findings in that section. Use this format:
+
+```
+### 2. Menisci [COR PD FS]
+```
+
+Use the series label exactly as it appears in the image list. If a section draws from multiple series, use the most informative one. If a section has no relevant image (e.g. Summary), omit the tag entirely.
+
 ---
 
 ## STRUCTURED ANALYSIS
