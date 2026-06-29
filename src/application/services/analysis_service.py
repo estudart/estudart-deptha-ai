@@ -2,6 +2,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from src.application.entities.analysis_result import AnalysisResult
 from src.application.entities.series_summary import SeriesSummary
 from src.domain.models.report import Report
 from src.infrastructure.dicom_reader import DicomReader
@@ -72,7 +73,8 @@ class AnalysisService:
                 self._log.warning("Large image payload — GPT-4o may refuse or truncate", total_images=total_images, suggestion="reduce --slices")
 
             self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path))
-            analysis = self._openai_client.call_vision(images, patient_context, prompt_path)
+            raw = self._openai_client.call_vision(images, patient_context, prompt_path)
+            analysis = AnalysisResult.model_validate(raw)
             self._log.info("GPT-4o response received", sections=len(analysis.sections))
 
             summaries = [

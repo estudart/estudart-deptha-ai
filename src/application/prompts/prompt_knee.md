@@ -55,45 +55,10 @@ The images provided are representative slices from a knee MRI exam, organized by
 
 You MUST respond with a single valid JSON object — no markdown, no explanation, no text outside the JSON.
 
-Use this exact schema:
+The JSON must conform to this schema:
 
 ```json
-{
-  "sections": [
-    {
-      "title": "Ligaments",
-      "series_label": "<exact series label from the image list above>",
-      "best_slice_index": <0-based index of the single slice that most clearly showed the key finding in this section>,
-      "status": "normal" | "attention" | "significant",
-      "subsections": [
-        {
-          "title": "ACL / ACL Graft",
-          "findings": [
-            "Fiber continuity intact with mild expected post-graft signal heterogeneity.",
-            "Graft orientation normal, no evidence of laxity."
-          ]
-        }
-      ],
-      "notes": [
-        "Post-repair peripheral signal changes present. Criteria for suture failure not met."
-      ]
-    }
-  ],
-  "summary": [
-    { "label": "ACL Graft", "status": "normal", "text": "Expected ligamentization signal, no failure criteria met." },
-    { "label": "Lateral Meniscus Repair", "status": "attention", "text": "Expected post-surgical peripheral signal changes." }
-  ],
-  "clinical_answer": {
-    "question": "<restate the primary clinical question from the patient context>",
-    "answer": "<focused, direct answer based solely on image findings>",
-    "confidence": "High" | "Moderate" | "Low",
-    "limiting_factors": "<image quality issues, missing sequences, or coverage gaps — or 'None'>"
-  },
-  "flags": [
-    "<finding that requires priority radiologist review, with one-line explanation>",
-    "No priority flags — findings consistent with expected post-operative changes."
-  ]
-}
+{output_schema}
 ```
 
 **Status rules** — assign based on the dominant finding in each section:

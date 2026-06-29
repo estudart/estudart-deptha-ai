@@ -162,6 +162,7 @@ class _ReportPDF(FPDF):
         self._cover(report)
         self._exam_metadata(report)
         self._series_table(report.series_summaries)
+        self.add_page()
         self._section_header("3. DETAILED FINDINGS")
 
         for sec in report.analysis.sections:
@@ -201,7 +202,7 @@ class _ReportPDF(FPDF):
         self.set_text_color(*_TEXT_LABEL)
         self.cell(210, 6, f"Generated: {report.generated_at.strftime('%B %d, %Y   %H:%M')}", align="C", ln=True)
 
-        self.ln(14)
+        self.ln(8)
 
     # ------------------------------------------------------------------ exam metadata
 
@@ -251,7 +252,7 @@ class _ReportPDF(FPDF):
             self.set_text_color(*_TEXT_PRIMARY)
             self.cell(col_val, 8, value, border=0, fill=True)
 
-        self.ln(10)
+        self.ln(6)
 
     # ------------------------------------------------------------------ series table
 
@@ -301,21 +302,41 @@ class _ReportPDF(FPDF):
             idx = len(slices) // 2
         return io.BytesIO(base64.b64decode(slices[idx]))
 
+    def _estimate_card_height(self, section: Section, text_w: float) -> float:
+        h = 14  # header + gap
+        for sub in section.subsections:
+            h += self._count_lines(_clean(sub.title), text_w - 8, 5) * 5 + 3
+            for f in sub.findings:
+                h += self._count_lines(_clean(f), text_w - 17, 5) * 5 + 1
+            h += 2
+        if section.reasoning:
+            lines = self._count_lines(_clean(section.reasoning), text_w - 20, 5)
+            h += lines * 5 + 12
+        if section.notes:
+            total = sum(self._count_lines(_clean(n), text_w - 20, 5) for n in section.notes)
+            h += total * 5 + len(section.notes) * 2 + 12
+        return h
+
     def _section_card(self, section: Section, img_buf: io.BytesIO | None) -> None:
         colour   = _STATUS_COLOUR.get(section.status, _ACCENT_BLUE)
-        bg_card  = _STATUS_BG.get(section.status, _CARD_BG)
         label    = _STATUS_LABEL.get(section.status, "See findings")
         img_size = 44
 
-        text_w = self.epw - (img_size + 6 if img_buf else 0)
+        text_w    = self.epw - (img_size + 6 if img_buf else 0)
+        est_h     = self._estimate_card_height(section, text_w)
+        min_h     = max(est_h, img_size + 8 if img_buf else est_h)
 
-        if self.get_y() + (img_size + 6 if img_buf else 20) > 272:
+        # Page break — keep entire card together
+        if self.get_y() + min_h > 272:
             self.add_page()
 
-        start_page = self.page
-        y_start    = self.get_y()
+        y_start = self.get_y()
 
-        # Card header row
+        # Card body background (drawn first, single pass)
+        self.set_fill_color(*_CARD_BG)
+        self.rect(self.M, y_start + 10, text_w, max(min_h - 10, 20), "F")
+
+        # Card header
         self.set_fill_color(*_CARD_HDR)
         self.rect(self.M, y_start, text_w, 10, "F")
         self.set_xy(self.M + 6, y_start + 1)
@@ -327,59 +348,43 @@ class _ReportPDF(FPDF):
         self.cell(50, 8, label, align="R", ln=True)
         self.ln(2)
 
-        # Card body background
-        body_y = self.get_y()
-
-        # Sub-sections
+        # Content — single pass, no re-render
         for sub in section.subsections:
             self._render_subsection(sub, text_w)
-
-        # Notes
-        for note in section.notes:
-            self._render_note(note, text_w)
+        if section.reasoning:
+            self._render_reasoning(section.reasoning, text_w)
+        if section.notes:
+            self._render_notes(section.notes, text_w)
 
         y_end = self.get_y() + 2
 
-        # Fill card body bg after we know the height
-        if self.page == start_page:
-            self.set_fill_color(*_CARD_BG)
-            self.rect(self.M, body_y - 1, text_w, y_end - body_y + 2, "F")
-            # Re-render text on top of background
-            self.set_y(body_y)
-            for sub in section.subsections:
-                self._render_subsection(sub, text_w)
-            for note in section.notes:
-                self._render_note(note, text_w)
-            self.set_y(y_end)
-
-        # DICOM image with white border (same page only)
-        if img_buf and self.page == start_page:
+        # DICOM image
+        if img_buf:
             img_x = self.M + text_w + 4
             img_y = y_start + max(0, (y_end - y_start - img_size) / 2)
             if img_y + img_size > 272:
-                img_y = y_start
-            # White background frame for the grayscale scan
+                img_y = y_start + 12
             pad = 2
             self.set_fill_color(*_WHITE)
             self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "F")
             self.image(img_buf, x=img_x, y=img_y, w=img_size, h=img_size)
-            # Subtle border
             self.set_draw_color(*_IMG_BORDER)
             self.set_line_width(0.3)
             self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "D")
             self.set_line_width(0.2)
             y_end = max(y_end, img_y + img_size + pad + 2)
 
-        # Left accent bar
-        if self.page == start_page:
-            self.set_fill_color(*colour)
-            self.rect(self.M, y_start, 3, y_end - y_start, "F")
+        # Left accent bar — drawn last so it sits on top
+        self.set_fill_color(*colour)
+        self.rect(self.M, y_start, 3, y_end - y_start, "F")
 
         self.set_y(y_end)
-        self.ln(5)
+        self.ln(4)
 
     def _render_subsection(self, sub, text_w: float) -> None:
         x = self.M + 6
+        bullet_w = 5
+        text_indent = x + bullet_w
 
         self.set_x(x)
         self.set_font("Helvetica", "B", 9)
@@ -390,40 +395,146 @@ class _ReportPDF(FPDF):
         self.set_font("Helvetica", "", 9)
         self.set_text_color(*_TEXT_PRIMARY)
         for finding in sub.findings:
-            self.set_x(x + 2)
-            self.multi_cell(text_w - 10, 5, f"  -  {_clean(finding)}")
+            # Bullet dash fixed-width, then text with hanging indent
+            bullet_y = self.get_y()
+            self.set_xy(x + 2, bullet_y)
+            self.cell(bullet_w, 5, "-")
+            self.set_xy(text_indent + 2, bullet_y)
+            self.multi_cell(text_w - bullet_w - 12, 5, _clean(finding))
 
         self.ln(2)
 
-    def _render_note(self, note: str, text_w: float) -> None:
+    def _render_reasoning(self, reasoning: str, text_w: float) -> None:
         x = self.M + 6
-        self.set_x(x + 4)
-        self.set_font("Helvetica", "I", 9)
+        pad = 4
+        inner_w = text_w - 8 - pad * 2
+
+        # Measure block height
+        self.set_font("Helvetica", "I", 8.5)
+        lines = self._count_lines(_clean(reasoning), inner_w, 5)
+        block_h = 5 + lines * 5 + pad  # label row + text rows + bottom pad
+
+        y = self.get_y()
+
+        # Subtle tinted background
+        self.set_fill_color(38, 38, 55)
+        self.rect(x, y, text_w - 8, block_h, "F")
+
+        # Thin left accent line
+        self.set_fill_color(*_ACCENT_BLUE)
+        self.rect(x, y, 2, block_h, "F")
+
+        # Label
+        self.set_xy(x + pad + 2, y + 3)
+        self.set_font("Helvetica", "B", 7)
+        self.set_text_color(*_ACCENT_BLUE)
+        self.cell(inner_w, 4, "REASONING", ln=True)
+
+        # Text
+        self.set_x(x + pad + 2)
+        self.set_font("Helvetica", "I", 8.5)
         self.set_text_color(*_TEXT_SECONDARY)
-        self.multi_cell(text_w - 14, 5, _clean(note), fill=False)
-        self.ln(1)
+        self.multi_cell(inner_w, 5, _clean(reasoning), fill=False)
+
+        self.set_y(y + block_h + 2)
+
+    def _render_notes(self, notes: list[str], text_w: float) -> None:
+        x   = self.M + 6
+        pad = 4
+        bullet_w  = 5
+        inner_w   = text_w - 8 - pad * 2 - bullet_w
+        line_h    = 5
+
+        # Measure total block height: label row + all bullet lines
+        total_lines = sum(self._count_lines(_clean(n), inner_w, line_h) for n in notes)
+        block_h = 5 + total_lines * line_h + len(notes) * 2 + pad
+
+        y = self.get_y()
+
+        # Background — slightly different shade from reasoning
+        self.set_fill_color(28, 28, 42)
+        self.rect(x, y, text_w - 8, block_h, "F")
+
+        # Thin left accent in status-muted colour
+        self.set_fill_color(*_TEXT_LABEL)
+        self.rect(x, y, 2, block_h, "F")
+
+        # Label
+        self.set_xy(x + pad + 2, y + 3)
+        self.set_font("Helvetica", "B", 7)
+        self.set_text_color(*_TEXT_LABEL)
+        self.cell(inner_w, 4, "OBSERVATIONS", ln=True)
+
+        # Bullet items
+        self.set_font("Helvetica", "I", 8.5)
+        self.set_text_color(*_TEXT_SECONDARY)
+        for note in notes:
+            bullet_y = self.get_y()
+            self.set_xy(x + pad + 2, bullet_y)
+            self.cell(bullet_w, line_h, "-")
+            self.set_xy(x + pad + 2 + bullet_w, bullet_y)
+            self.multi_cell(inner_w, line_h, _clean(note), fill=False)
+            self.ln(1)
+
+        self.set_y(y + block_h + 2)
 
     # ------------------------------------------------------------------ summary
 
     def _summary_section(self, items: list[SummaryItem]) -> None:
         self._section_header("4. SUMMARY OF FINDINGS")
 
-        for item in items:
+        pill_w  = 20
+        lbl_w   = 55
+        text_w  = self.epw - pill_w - lbl_w
+        line_h  = 5.5
+
+        for idx, item in enumerate(items):
             colour = _STATUS_COLOUR.get(item.status, _ACCENT_BLUE)
             bg     = _STATUS_BG.get(item.status, _CARD_BG)
 
-            self.set_x(self.M)
+            # Pre-measure value height
+            self.set_font("Helvetica", "", 9)
+            lines = self._count_lines(_clean(item.text), text_w, line_h)
+            row_h = max(lines * line_h + 4, 10)
+
+            # Page break guard — keep entire row together
+            if self.get_y() + row_h > 272:
+                self.add_page()
+
+            row_y = self.get_y()
+            alt   = _CARD_BG if idx % 2 == 0 else _CARD_HDR
+
+            # Backgrounds
             self.set_fill_color(*bg)
-            self.set_font("Helvetica", "B", 8)
+            self.rect(self.M, row_y, pill_w, row_h, "F")
+            self.set_fill_color(*alt)
+            self.rect(self.M + pill_w, row_y, lbl_w, row_h, "F")
+            self.rect(self.M + pill_w + lbl_w, row_y, text_w, row_h, "F")
+
+            # Status pill (vertically centred)
+            self.set_xy(self.M, row_y + (row_h - 4) / 2 - 1)
+            self.set_font("Helvetica", "B", 7.5)
             self.set_text_color(*colour)
-            self.cell(22, 7, _STATUS_LABEL[item.status][:6].upper(), border=0, fill=True, align="C")
-            self.set_fill_color(*_CARD_BG)
+            self.cell(pill_w, 4, _STATUS_LABEL[item.status][:6].upper(), align="C")
+
+            # Label — truncate to fit column width
             self.set_font("Helvetica", "B", 9)
             self.set_text_color(*_TEXT_PRIMARY)
-            self.cell(48, 7, _clean(item.label), fill=True)
+            label_text = _clean(item.label)
+            while self.get_string_width(label_text) > lbl_w - 4 and len(label_text) > 3:
+                label_text = label_text[:-1]
+            if label_text != _clean(item.label):
+                label_text = label_text[:-1] + "..."
+            self.set_xy(self.M + pill_w + 2, row_y + (row_h - 4) / 2 - 1)
+            self.cell(lbl_w - 2, 4, label_text)
+
+            # Value text
+            self.set_xy(self.M + pill_w + lbl_w + 3, row_y + 2)
             self.set_font("Helvetica", "", 9)
             self.set_text_color(*_TEXT_SECONDARY)
-            self.multi_cell(self.epw - 70, 7, _clean(item.text), fill=True)
+            self.multi_cell(text_w - 6, line_h, _clean(item.text))
+
+            self.set_y(row_y + row_h)
 
         self.ln(4)
 
@@ -438,21 +549,58 @@ class _ReportPDF(FPDF):
             ("Confidence",         answer.confidence),
             ("Limiting factors",   answer.limiting_factors),
         ]
-        lbl_w = 38
+        lbl_w  = 38
+        val_w  = self.epw - lbl_w
+        line_h = 5.5
 
-        for label, value in rows:
-            self.set_x(self.M)
-            self.set_fill_color(*_CARD_HDR)
+        for idx, (label, value) in enumerate(rows):
+            row_y = self.get_y()
+
+            # Measure how tall the value will be
+            self.set_font("Helvetica", "", 9)
+            # Use a throw-away multi_cell in dry-run to count lines
+            lines = self._count_lines(_clean(value), val_w, line_h)
+            row_h = max(lines * line_h + 4, 10)
+
+            # Label background
+            lbl_c = _CARD_HDR if idx % 2 == 0 else (35, 35, 50)
+            self.set_fill_color(*lbl_c)
+            self.rect(self.M, row_y, lbl_w, row_h, "F")
+
+            # Value background
+            val_c = _CARD_BG if idx % 2 == 0 else (26, 26, 38)
+            self.set_fill_color(*val_c)
+            self.rect(self.M + lbl_w, row_y, val_w, row_h, "F")
+
+            # Label text (vertically centred)
+            self.set_xy(self.M + 3, row_y + (row_h - 4) / 2 - 1)
             self.set_font("Helvetica", "B", 8)
             self.set_text_color(*_TEXT_LABEL)
-            self.cell(lbl_w, 7, label, border=0, fill=True)
+            self.cell(lbl_w - 3, 4, label)
 
-            self.set_fill_color(*_CARD_BG)
+            # Value text
+            self.set_xy(self.M + lbl_w + 3, row_y + 2)
             self.set_font("Helvetica", "", 9)
             self.set_text_color(*_TEXT_PRIMARY)
-            self.multi_cell(self.epw - lbl_w, 7, _clean(value), border=0, fill=True)
+            self.multi_cell(val_w - 6, line_h, _clean(value))
+
+            self.set_y(row_y + row_h)
 
         self.ln(4)
+
+    def _count_lines(self, text: str, width: float, line_h: float) -> int:
+        """Estimate number of lines multi_cell will produce for given width."""
+        self.set_font("Helvetica", "", 9)
+        words = text.split()
+        lines, current = 1, ""
+        for word in words:
+            test = (current + " " + word).strip()
+            if self.get_string_width(test) > width - 6:
+                lines += 1
+                current = word
+            else:
+                current = test
+        return lines
 
     # ------------------------------------------------------------------ flags
 
@@ -475,12 +623,11 @@ class _ReportPDF(FPDF):
         self.set_text_color(*_ACCENT_BLUE)
         self.set_font("Helvetica", "B", 10)
         self.set_x(self.M)
-        # Accent side bar on header
         bar_y = self.get_y()
         self.cell(self.epw, 9, f"    {text}", fill=True, ln=True)
         self.set_fill_color(*_ACCENT_BLUE)
         self.rect(self.M, bar_y, 3, 9, "F")
-        self.ln(4)
+        self.ln(3)
 
     def _legal_footer(self) -> None:
         self.ln(6)
