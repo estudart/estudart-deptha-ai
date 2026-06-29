@@ -342,10 +342,17 @@ class _ReportPDF(FPDF):
         self.set_xy(self.M + 6, y_start + 1)
         self.set_font("Helvetica", "B", 10)
         self.set_text_color(*_TEXT_PRIMARY)
-        self.cell(text_w - 55, 8, _clean(section.title))
+        title_max_w = text_w - 60
+        title = _clean(section.title)
+        while self.get_string_width(title) > title_max_w and len(title) > 3:
+            title = title[:-1]
+        if title != _clean(section.title):
+            title = title[:-1] + "..."
+        self.cell(title_max_w, 8, title)
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(*colour)
-        self.cell(50, 8, label, align="R", ln=True)
+        self.cell(44, 8, label, align="R")
+        self.cell(6, 8, "", ln=True)  # right padding
         self.ln(2)
 
         # Content — single pass, no re-render
