@@ -31,7 +31,7 @@ class AnalysisService:
         input_path: Path,
         patient_context: str,
         prompt_path: Path | None = _DEFAULT_PROMPT,
-        slices_per_series: int = 20,
+        slices_per_series: int = 8,
     ) -> Report:
         tmp_dir = None
 
@@ -68,6 +68,8 @@ class AnalysisService:
             images = self._image_encoder.encode_series(selected)
             total_images = sum(len(v) for v in images.values())
             self._log.info("Encoding complete", total_images_encoded=total_images)
+            if total_images > 80:
+                self._log.warning("Large image payload — GPT-4o may refuse or truncate", total_images=total_images, suggestion="reduce --slices")
 
             self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path))
             analysis = self._openai_client.call_vision(images, patient_context, prompt_path)

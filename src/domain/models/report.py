@@ -160,9 +160,8 @@ class _ReportPDF(FPDF):
         self._series_table(report.series_summaries)
         self._section_header("3. DETAILED FINDINGS")
 
-        slice_assignments = self._assign_slices(report.analysis.sections, report.encoded_images)
-        for i, sec in enumerate(report.analysis.sections):
-            self._section_card(sec, slice_assignments.get(i))
+        for sec in report.analysis.sections:
+            self._section_card(sec, self._resolve_image(sec, report.encoded_images))
 
         self._summary_section(report.analysis.summary)
         self._clinical_answer(report.analysis.clinical_answer)
@@ -270,27 +269,21 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ section card
 
-    def _assign_slices(self, sections: list[Section], encoded_images: dict[str, list[str]]) -> dict[int, io.BytesIO]:
-        from collections import defaultdict
-        series_to_sections: dict[str, list[int]] = defaultdict(list)
-        section_to_series: dict[int, str] = {}
-
-        for i, sec in enumerate(sections):
-            key = self._match_series(sec, encoded_images)
-            if key:
-                series_to_sections[key].append(i)
-                section_to_series[i] = key
-
-        assignments: dict[int, io.BytesIO] = {}
-        for key, indices in series_to_sections.items():
-            slices = encoded_images[key]
-            n = len(indices)
-            for j, sec_idx in enumerate(indices):
-                # Spread evenly through the slice stack: 1/(n+1), 2/(n+1), ...
-                slice_idx = int((j + 1) / (n + 1) * len(slices))
-                assignments[sec_idx] = io.BytesIO(base64.b64decode(slices[slice_idx]))
-
-        return assignments
+    def _resolve_image(self, section: Section, encoded_images: dict[str, list[str]]) -> io.BytesIO | None:
+        if not encoded_images or not section.series_label:
+            return None
+        key = next(
+            (k for k in encoded_images
+             if section.series_label.lower() in k.lower() or k.lower() in section.series_label.lower()),
+            None,
+        )
+        if not key:
+            return None
+        slices = encoded_images[key]
+        idx = section.best_slice_index
+        if idx is None or idx < 0 or idx >= len(slices):
+            idx = len(slices) // 2
+        return io.BytesIO(base64.b64decode(slices[idx]))
 
     def _section_card(self, section: Section, img_buf: io.BytesIO | None) -> None:
         colour = _STATUS_COLOUR.get(section.status, _BLUE_MID)
@@ -455,40 +448,6 @@ class _ReportPDF(FPDF):
         self.ln(4)
 
     # ------------------------------------------------------------------ helpers
-
-    def _match_series(self, section: Section, encoded_images: dict[str, list[str]]) -> str | None:
-        if not encoded_images:
-            return None
-
-        # Model provided an exact label
-        if section.series_label:
-            match = next(
-                (k for k in encoded_images
-                 if section.series_label.lower() in k.lower() or k.lower() in section.series_label.lower()),
-                None,
-            )
-            if match:
-                return match
-
-        # Keyword fallback
-        t = section.title.lower()
-        if any(w in t for w in ("ligament", "acl", "pcl", "collateral")):
-            pref = ("sag", "cor")
-        elif "menisc" in t:
-            pref = ("cor", "pd")
-        elif "cartilage" in t:
-            pref = ("sag", "t2")
-        elif any(w in t for w in ("bone", "marrow", "subchondral")):
-            pref = ("sag", "t1")
-        elif any(w in t for w in ("fluid", "synovium", "effusion")):
-            pref = ("axi", "cor")
-        elif any(w in t for w in ("periarticular", "tendon", "soft")):
-            pref = ("sag", "axi")
-        else:
-            pref = ()
-
-        labels = list(encoded_images.keys())
-        return next((k for p in pref for k in labels if p in k.lower()), labels[0] if labels else None)
 
     def _section_header(self, text: str) -> None:
         self.set_fill_color(*_BLUE_DARK)

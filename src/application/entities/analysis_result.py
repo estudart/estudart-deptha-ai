@@ -11,6 +11,7 @@ class Subsection(BaseModel):
 class Section(BaseModel):
     title: str
     series_label: str | None = None
+    best_slice_index: int | None = None
     status: Literal["normal", "attention", "significant"]
     subsections: list[Subsection] = []
     notes: list[str] = []

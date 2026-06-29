@@ -63,6 +63,7 @@ Use this exact schema:
     {
       "title": "Ligaments",
       "series_label": "<exact series label from the image list above>",
+      "best_slice_index": <0-based index of the single slice that most clearly showed the key finding in this section>,
       "status": "normal" | "attention" | "significant",
       "subsections": [
         {
@@ -101,6 +102,8 @@ Use this exact schema:
 - `"significant"` — unexpected pathology that may alter clinical management (actual tear, graft failure, displaced fragment, fracture)
 
 **series_label** — use the exact label string as shown in the image list (e.g. `"WATER: COR PD FSE FLEX"`). Choose the series that most clearly shows the structures in this section. For summary, clinical_answer, and flags, omit series_label.
+
+**best_slice_index** — the 0-based index of the specific slice (within the chosen series) that most clearly demonstrated the key finding you are describing. You saw the slices in order — pick the one that best supports this section's findings. If you cannot determine a best slice, omit this field.
 
 **Required sections** (always include all, in this order):
 1. Ligaments
