@@ -3,10 +3,12 @@ import io
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 import re
 
 from fpdf import FPDF
 
+from src.application.entities.analysis_result import AnalysisResult, Section, SummaryItem
 from src.application.entities.series_summary import SeriesSummary
 
 # ---------------------------------------------------------------------------
@@ -21,7 +23,16 @@ _UNICODE_REPLACEMENTS = str.maketrans({
     "·": "-", "•": "-",
     "→": "->", "✓": "OK",
     "■": "#", "×": "x",
+    "\U0001f7e2": "", "\U0001f7e1": "", "\U0001f534": "",
 })
+
+
+def _clean(text: str) -> str:
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"\*(.+?)\*",     r"\1", text)
+    text = text.translate(_UNICODE_REPLACEMENTS)
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
 
 # ---------------------------------------------------------------------------
 # Colours
@@ -31,92 +42,37 @@ _BLUE_DARK  = (22,  60, 120)
 _BLUE_MID   = (30,  90, 180)
 _BLUE_LIGHT = (235, 242, 255)
 _GREEN      = (25, 130,  70)
-_GREEN_BG   = (235, 248, 240)
+_GREEN_BG   = (232, 248, 238)
 _ORANGE     = (200, 110,  15)
+_ORANGE_BG  = (255, 248, 235)
 _RED        = (180,  35,  35)
+_RED_BG     = (255, 235, 235)
 _DARK       = (25,   25,  25)
 _GREY_DARK  = (90,   90,  90)
+_GREY_MID   = (160, 160, 160)
 _GREY_LIGHT = (245, 245, 245)
 _WHITE      = (255, 255, 255)
 
-_STATUS_MAP = {
-    "integro": _GREEN, "intact": _GREEN, "normal": _GREEN,
-    "preservad": _GREEN, "no tear": _GREEN, "no evidence": _GREEN,
-    "no suture failure": _GREEN, "criteria for suture failure not met": _GREEN,
-    "edema": _ORANGE, "derrame": _ORANGE, "mild": _ORANGE,
-    "moderate": _ORANGE, "effusion": _ORANGE, "heterogeneous": _ORANGE,
-    "rotura": _RED, "ruptur": _RED, "torn": _RED, "fractur": _RED,
-    "displaced": _RED, "failure": _RED,
+_STATUS_COLOUR: dict[str, tuple] = {
+    "normal":      _GREEN,
+    "attention":   _ORANGE,
+    "significant": _RED,
 }
-
-_DISCLAIMER_STARTS = (
-    "this structured description was generated",
-    "this report was generated with ai",
-    "note: this",
-    "important:",
-)
-
-
-def _status_colour(text: str) -> tuple:
-    lower = text.lower()
-    for kw, col in _STATUS_MAP.items():
-        if kw in lower:
-            return col
-    return _BLUE_MID
-
-
-def _status_label(text: str) -> str:
-    lower = text.lower()
-    if any(k in lower for k in ("no evidence", "criteria for suture failure not met", "not met", "no tear", "intact", "integro", "normal", "preservad")):
-        return "No significant finding"
-    if any(k in lower for k in ("edema", "mild", "effusion", "heterogeneous", "post-surgical", "post-repair")):
-        return "Attention"
-    if any(k in lower for k in ("failure", "torn", "ruptur", "rotura", "displaced", "fractur")):
-        return "Significant finding"
-    return "See findings"
-
-
-def _clean(text: str) -> str:
-    """Strip markdown bold/italic markers and sanitise unicode."""
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-    text = re.sub(r"\*(.+?)\*",     r"\1", text)
-    text = text.translate(_UNICODE_REPLACEMENTS)
-    return text.encode("latin-1", errors="replace").decode("latin-1")
-
-
-def _is_model_disclaimer(line: str) -> bool:
-    lower = line.lower().strip()
-    return any(lower.startswith(s) for s in _DISCLAIMER_STARTS)
-
-
-def _parse_sections(analysis: str) -> list[dict]:
-    """Split on ## or ### headings. Each section: {title, lines}."""
-    sections: list[dict] = []
-    current: dict | None = None
-
-    for raw in analysis.splitlines():
-        line = raw.strip()
-        if _is_model_disclaimer(line):
-            break  # strip model-appended disclaimers
-
-        if re.match(r"^#{1,3} ", line):
-            if current is not None:
-                sections.append(current)
-            heading = re.sub(r"^#+\s*", "", line).strip()
-            tag_match = re.search(r"\[([^\]]+)\]\s*$", heading)
-            series = tag_match.group(1).strip() if tag_match else None
-            title = re.sub(r"\s*\[[^\]]+\]\s*$", "", heading).strip()
-            current = {"title": title, "series": series, "lines": []}
-        elif current is not None:
-            current["lines"].append(line)
-
-    if current is not None:
-        sections.append(current)
-
-    if not sections:
-        sections = [{"title": "Findings", "series": None, "lines": analysis.splitlines()}]
-
-    return sections
+_STATUS_BG: dict[str, tuple] = {
+    "normal":      _GREEN_BG,
+    "attention":   _ORANGE_BG,
+    "significant": _RED_BG,
+}
+_STATUS_LABEL: dict[str, str] = {
+    "normal":      "No significant finding",
+    "attention":   "Attention",
+    "significant": "Significant finding",
+}
+_SUMMARY_ICON: dict[str, str] = {
+    "normal":      "OK",
+    "attention":   "!!",
+    "significant": "!!",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +83,7 @@ def _parse_sections(analysis: str) -> list[dict]:
 class Report:
     patient_context: str
     series_summaries: list[SeriesSummary]
-    analysis: str
+    analysis: AnalysisResult
     encoded_images: dict[str, list[str]] = field(default_factory=dict)
     generated_at: datetime = field(default_factory=datetime.now)
 
@@ -136,21 +92,44 @@ class Report:
         self._save_markdown(output_dir / "report.md")
         self._save_pdf(output_dir / "report.pdf")
 
-    def _markdown_content(self) -> str:
-        series_lines = "\n".join(
-            f"- {s.label}: {s.slices_total} total slices, {s.slices_analysed} analysed ({s.modality})"
-            for s in self.series_summaries
-        )
-        return (
-            f"# Deptha - MRI Report\n"
-            f"Generated: {self.generated_at.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-            f"## Clinical Context\n{self.patient_context}\n\n"
-            f"## Series Analysed\n{series_lines}\n\n"
-            f"## Findings\n{self.analysis}\n"
-        )
-
     def _save_markdown(self, path: Path) -> None:
-        path.write_text(self._markdown_content(), encoding="utf-8")
+        lines = [
+            "# Deptha - MRI Report",
+            f"Generated: {self.generated_at.strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "## Clinical Context",
+            self.patient_context,
+            "",
+            "## Series Analysed",
+        ]
+        for s in self.series_summaries:
+            lines.append(f"- {s.label}: {s.slices_total} total slices, {s.slices_analysed} analysed ({s.modality})")
+        lines += ["", "## Findings", ""]
+        for sec in self.analysis.sections:
+            lines.append(f"### {sec.title}  [{sec.status.upper()}]")
+            for sub in sec.subsections:
+                lines.append(f"#### {sub.title}")
+                for f in sub.findings:
+                    lines.append(f"- {f}")
+            for note in sec.notes:
+                lines.append(f"> {note}")
+            lines.append("")
+        lines += ["## Summary", ""]
+        for item in self.analysis.summary:
+            lines.append(f"- [{item.status.upper()}] **{item.label}**: {item.text}")
+        lines += [
+            "",
+            "## Clinical Answer",
+            f"**Question:** {self.analysis.clinical_answer.question}",
+            f"**Answer:** {self.analysis.clinical_answer.answer}",
+            f"**Confidence:** {self.analysis.clinical_answer.confidence}",
+            f"**Limiting factors:** {self.analysis.clinical_answer.limiting_factors}",
+            "",
+            "## Radiologist Flags",
+        ]
+        for flag in self.analysis.flags:
+            lines.append(f"- {flag}")
+        path.write_text("\n".join(lines), encoding="utf-8")
 
     def _save_pdf(self, path: Path) -> None:
         pdf = _ReportPDF()
@@ -163,7 +142,7 @@ class Report:
 # ---------------------------------------------------------------------------
 
 class _ReportPDF(FPDF):
-    M = 18  # margin
+    M = 18  # page margin
 
     def normalize_text(self, text: str) -> str:
         s = text.translate(_UNICODE_REPLACEMENTS).encode("latin-1", errors="replace").decode("latin-1")
@@ -180,8 +159,14 @@ class _ReportPDF(FPDF):
         self._exam_metadata(report)
         self._series_table(report.series_summaries)
         self._section_header("3. DETAILED FINDINGS")
-        for section in _parse_sections(report.analysis):
-            self._section_card(section, report.encoded_images)
+
+        slice_assignments = self._assign_slices(report.analysis.sections, report.encoded_images)
+        for i, sec in enumerate(report.analysis.sections):
+            self._section_card(sec, slice_assignments.get(i))
+
+        self._summary_section(report.analysis.summary)
+        self._clinical_answer(report.analysis.clinical_answer)
+        self._flags_section(report.analysis.flags)
         self._legal_footer()
 
     # ------------------------------------------------------------------ cover
@@ -213,30 +198,25 @@ class _ReportPDF(FPDF):
     def _exam_metadata(self, report: Report) -> None:
         self._section_header("1. EXAM DATA")
 
-        # Clinical context block
         self.set_x(self.M)
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(*_GREY_DARK)
         self.cell(self.epw, 5, "CLINICAL CONTEXT", ln=True)
 
-        self.set_fill_color(*_BLUE_LIGHT)
         ctx = _clean(report.patient_context)
         x, y = self.M, self.get_y()
-        self.rect(x, y, self.epw, 1, "F")  # top border
+        self.set_fill_color(*_BLUE_LIGHT)
+        self.rect(x, y, self.epw, 1, "F")
         self.set_xy(x + 3, y + 3)
         self.set_font("Helvetica", "", 9)
         self.set_text_color(*_DARK)
         self.multi_cell(self.epw - 6, 5, ctx, fill=False)
         bottom = self.get_y()
-        self.set_fill_color(*_BLUE_LIGHT)
         self.rect(x, y, self.epw, bottom - y + 3, "F")
         self.set_xy(x + 3, y + 3)
-        self.set_font("Helvetica", "", 9)
-        self.set_text_color(*_DARK)
         self.multi_cell(self.epw - 6, 5, ctx)
         self.set_y(bottom + 4)
 
-        # Short metadata row
         fields = [
             ("Series analysed", str(len(report.series_summaries))),
             ("Total slices",    str(sum(s.slices_total for s in report.series_summaries))),
@@ -247,7 +227,6 @@ class _ReportPDF(FPDF):
 
         self.set_x(self.M)
         for label, value in fields:
-            x0 = self.get_x()
             self.set_fill_color(*_GREY_LIGHT)
             self.set_font("Helvetica", "", 8)
             self.set_text_color(*_GREY_DARK)
@@ -281,7 +260,7 @@ class _ReportPDF(FPDF):
             self.set_x(self.M)
             fill = idx % 2 == 0
             self.set_fill_color(*(_BLUE_LIGHT if fill else _WHITE))
-            self.cell(cw[0], 7, s.label[:56], border=1, fill=fill)
+            self.cell(cw[0], 7, _clean(s.label[:56]), border=1, fill=fill)
             self.cell(cw[1], 7, str(s.slices_total),    border=1, fill=fill, align="C")
             self.cell(cw[2], 7, str(s.slices_analysed), border=1, fill=fill, align="C")
             self.cell(cw[3], 7, s.modality,             border=1, fill=fill, align="C")
@@ -291,115 +270,225 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ section card
 
-    def _section_card(self, section: dict, encoded_images: dict[str, list[str]] | None = None) -> None:
-        title     = _clean(section["title"])
-        lines     = section["lines"]
-        full_text = " ".join(lines)
-        colour    = _status_colour(full_text)
-        label     = _status_label(full_text)
+    def _assign_slices(self, sections: list[Section], encoded_images: dict[str, list[str]]) -> dict[int, io.BytesIO]:
+        from collections import defaultdict
+        series_to_sections: dict[str, list[int]] = defaultdict(list)
+        section_to_series: dict[int, str] = {}
 
-        # Resolve image for this section
-        img_buf  = None
-        img_size = 42  # mm — square thumbnail
-        series_key = section.get("series")
-        if encoded_images and series_key:
-            # fuzzy match: find first series whose label contains the tag
-            match = next(
-                (k for k in encoded_images if series_key.lower() in k.lower() or k.lower() in series_key.lower()),
-                None,
-            )
-            if match:
-                slices = encoded_images[match]
-                mid    = slices[len(slices) // 2]
-                img_buf = io.BytesIO(base64.b64decode(mid))
+        for i, sec in enumerate(sections):
+            key = self._match_series(sec, encoded_images)
+            if key:
+                series_to_sections[key].append(i)
+                section_to_series[i] = key
 
-        text_w = self.epw - (img_size + 4 if img_buf else 0)
-        y_start = self.get_y()
+        assignments: dict[int, io.BytesIO] = {}
+        for key, indices in series_to_sections.items():
+            slices = encoded_images[key]
+            n = len(indices)
+            for j, sec_idx in enumerate(indices):
+                # Spread evenly through the slice stack: 1/(n+1), 2/(n+1), ...
+                slice_idx = int((j + 1) / (n + 1) * len(slices))
+                assignments[sec_idx] = io.BytesIO(base64.b64decode(slices[slice_idx]))
 
-        # Header bar
-        self.set_fill_color(245, 247, 252)
-        self.set_x(self.M + 4)
+        return assignments
+
+    def _section_card(self, section: Section, img_buf: io.BytesIO | None) -> None:
+        colour = _STATUS_COLOUR.get(section.status, _BLUE_MID)
+        bg     = _STATUS_BG.get(section.status, _BLUE_LIGHT)
+        label    = _STATUS_LABEL.get(section.status, "See findings")
+        img_size = 44
+
+        text_w = self.epw - (img_size + 5 if img_buf else 0)
+
+        # Page break guard
+        if self.get_y() + (img_size + 6 if img_buf else 20) > 272:
+            self.add_page()
+
+        start_page = self.page
+        y_start    = self.get_y()
+
+        # Card header
+        self.set_fill_color(*bg)
+        self.rect(self.M, y_start, text_w, 10, "F")
+        self.set_xy(self.M + 5, y_start + 1)
         self.set_font("Helvetica", "B", 10)
         self.set_text_color(*_BLUE_DARK)
-        self.cell(text_w - 50, 8, title, fill=True)
+        self.cell(text_w - 52, 8, _clean(section.title))
         self.set_font("Helvetica", "B", 8)
         self.set_text_color(*colour)
-        self.cell(46, 8, label, align="R", ln=True)
-        self.ln(1)
+        self.cell(47, 8, label, align="R", ln=True)
+        self.ln(2)
 
-        # Body lines (constrained to text column width)
-        for line in lines:
-            if not line.strip():
-                self.ln(2)
-                continue
-            self._card_line(line, max_w=text_w - 5)
+        # Sub-sections
+        for sub in section.subsections:
+            self._render_subsection(sub, text_w)
+
+        # Notes (blockquote callouts)
+        for note in section.notes:
+            self._render_note(note, text_w)
 
         y_end = self.get_y() + 2
 
-        # Embed image aligned to right of card, vertically centred
-        if img_buf:
-            img_x = self.M + text_w + 2
+        # Image (same page only)
+        if img_buf and self.page == start_page:
+            img_x = self.M + text_w + 3
             img_y = y_start + max(0, (y_end - y_start - img_size) / 2)
-            # ensure image fits on page
-            if img_y + img_size > 277:
+            if img_y + img_size > 272:
                 img_y = y_start
             self.image(img_buf, x=img_x, y=img_y, w=img_size, h=img_size)
             y_end = max(y_end, img_y + img_size + 2)
 
         # Left accent bar
-        self.set_fill_color(*colour)
-        self.rect(self.M, y_start, 3, y_end - y_start, "F")
+        if self.page == start_page:
+            self.set_fill_color(*colour)
+            self.rect(self.M, y_start, 3, y_end - y_start, "F")
 
         self.set_y(y_end)
         self.ln(5)
 
-    def _card_line(self, raw: str, max_w: float | None = None) -> None:
-        line = raw.strip()
+    def _render_subsection(self, sub, text_w: float) -> None:
         x = self.M + 5
-        w = (max_w if max_w is not None else self.epw) - 5
 
-        # Blockquote: > text
-        if line.startswith("> "):
-            content = _clean(line[2:])
-            self.set_x(x + 4)
-            self.set_font("Helvetica", "I", 9)
-            self.set_text_color(*_GREY_DARK)
-            self.set_fill_color(*_GREY_LIGHT)
-            self.multi_cell(w - 4, 5, content, fill=True)
-            return
-
-        # Sub-heading: **bold** only line
-        if re.match(r"^\*\*[^*]+\*\*$", line) or re.match(r"^\*\*[^*]+\*\*:?\s*$", line):
-            content = _clean(line)
-            self.set_x(x)
-            self.set_font("Helvetica", "B", 9)
-            self.set_text_color(*_BLUE_DARK)
-            self.ln(1)
-            self.set_x(x)
-            self.multi_cell(w, 5, content)
-            return
-
-        # Bullet
-        if line.startswith("- ") or line.startswith("* "):
-            content = _clean(line[2:])
-            # strip leading ?
-            content = content.lstrip("? ")
-            self.set_x(x + 2)
-            self.set_font("Helvetica", "", 9)
-            self.set_text_color(*_DARK)
-            self.multi_cell(w - 2, 5, f"  -  {content}")
-            return
-
-        # Plain text
-        content = _clean(line)
-        if not content.strip():
-            return
+        # Sub-section title
         self.set_x(x)
+        self.set_font("Helvetica", "B", 9)
+        self.set_text_color(*_BLUE_DARK)
+        self.multi_cell(text_w - 8, 5, _clean(sub.title))
+        self.ln(1)
+
+        # Findings
         self.set_font("Helvetica", "", 9)
         self.set_text_color(*_DARK)
-        self.multi_cell(w, 5, content)
+        for finding in sub.findings:
+            self.set_x(x + 2)
+            self.multi_cell(text_w - 10, 5, f"  -  {_clean(finding)}")
+
+        self.ln(2)
+
+    def _render_note(self, note: str, text_w: float) -> None:
+        x = self.M + 5
+        self.set_x(x + 4)
+        self.set_font("Helvetica", "I", 9)
+        self.set_text_color(*_GREY_DARK)
+        self.set_fill_color(*_GREY_LIGHT)
+        self.multi_cell(text_w - 12, 5, _clean(note), fill=True)
+        self.ln(1)
+
+    # ------------------------------------------------------------------ summary
+
+    def _summary_section(self, items: list[SummaryItem]) -> None:
+        self._section_header("4. SUMMARY OF FINDINGS")
+
+        for item in items:
+            colour = _STATUS_COLOUR.get(item.status, _BLUE_MID)
+            bg     = _STATUS_BG.get(item.status, _BLUE_LIGHT)
+
+            self.set_x(self.M)
+            self.set_fill_color(*bg)
+            # Status pill
+            self.set_font("Helvetica", "B", 8)
+            self.set_text_color(*colour)
+            self.cell(22, 7, _STATUS_LABEL[item.status][:6].upper(), border=0, fill=True, align="C")
+            # Label
+            self.set_font("Helvetica", "B", 9)
+            self.set_text_color(*_DARK)
+            self.cell(48, 7, _clean(item.label))
+            # Text
+            self.set_font("Helvetica", "", 9)
+            self.multi_cell(self.epw - 70, 7, _clean(item.text))
+
+        self.ln(4)
+
+    # ------------------------------------------------------------------ clinical answer
+
+    def _clinical_answer(self, answer) -> None:
+        self._section_header("5. DIRECT ANSWER TO CLINICAL QUESTION")
+
+        x = self.M
+        self.set_fill_color(*_BLUE_LIGHT)
+        y = self.get_y()
+
+        rows = [
+            ("Clinical question", answer.question),
+            ("Image-based answer", answer.answer),
+            ("Confidence",         answer.confidence),
+            ("Limiting factors",   answer.limiting_factors),
+        ]
+        lbl_w = 38
+
+        for label, value in rows:
+            self.set_x(x)
+            self.set_font("Helvetica", "B", 8)
+            self.set_text_color(*_GREY_DARK)
+            self.set_fill_color(*_GREY_LIGHT)
+            row_y = self.get_y()
+
+            # Measure value height
+            self.set_font("Helvetica", "", 9)
+            self.set_text_color(*_DARK)
+
+            # Draw label cell background
+            self.set_fill_color(*_GREY_LIGHT)
+            self.set_font("Helvetica", "B", 8)
+            self.set_text_color(*_GREY_DARK)
+            self.cell(lbl_w, 7, label, border=1, fill=True)
+
+            # Value
+            self.set_fill_color(*_WHITE)
+            self.set_font("Helvetica", "", 9)
+            self.set_text_color(*_DARK)
+            self.multi_cell(self.epw - lbl_w, 7, _clean(value), border=1, fill=True)
+
+        self.ln(4)
+
+    # ------------------------------------------------------------------ flags
+
+    def _flags_section(self, flags: list[str]) -> None:
+        self._section_header("6. RADIOLOGIST ATTENTION FLAGS")
+
+        for flag in flags:
+            self.set_x(self.M + 4)
+            self.set_font("Helvetica", "", 9)
+            self.set_text_color(*_DARK)
+            self.multi_cell(self.epw - 4, 6, f"  -  {_clean(flag)}")
+
+        self.ln(4)
 
     # ------------------------------------------------------------------ helpers
+
+    def _match_series(self, section: Section, encoded_images: dict[str, list[str]]) -> str | None:
+        if not encoded_images:
+            return None
+
+        # Model provided an exact label
+        if section.series_label:
+            match = next(
+                (k for k in encoded_images
+                 if section.series_label.lower() in k.lower() or k.lower() in section.series_label.lower()),
+                None,
+            )
+            if match:
+                return match
+
+        # Keyword fallback
+        t = section.title.lower()
+        if any(w in t for w in ("ligament", "acl", "pcl", "collateral")):
+            pref = ("sag", "cor")
+        elif "menisc" in t:
+            pref = ("cor", "pd")
+        elif "cartilage" in t:
+            pref = ("sag", "t2")
+        elif any(w in t for w in ("bone", "marrow", "subchondral")):
+            pref = ("sag", "t1")
+        elif any(w in t for w in ("fluid", "synovium", "effusion")):
+            pref = ("axi", "cor")
+        elif any(w in t for w in ("periarticular", "tendon", "soft")):
+            pref = ("sag", "axi")
+        else:
+            pref = ()
+
+        labels = list(encoded_images.keys())
+        return next((k for p in pref for k in labels if p in k.lower()), labels[0] if labels else None)
 
     def _section_header(self, text: str) -> None:
         self.set_fill_color(*_BLUE_DARK)
