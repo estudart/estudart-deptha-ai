@@ -27,10 +27,9 @@ class Section(BaseModel):
     )
     status: Literal["normal", "attention", "significant"] = Field(
         description=(
-            "'normal' — intact structures, no unexpected signal changes. "
-            "'attention' — expected post-surgical changes, mild edema, effusion, or findings to monitor. "
-            "'significant' — unexpected pathology that may alter clinical management "
-            "(actual tear, graft failure, displaced fragment, fracture)."
+            "'normal' — no relevant findings in this section. "
+            "'attention' — findings present but not expected to alter clinical management; monitor. "
+            "'significant' — findings that may alter clinical management and require priority radiologist review."
         ),
     )
     subsections: list[Subsection] = Field(default=[], description="Detailed per-structure findings within this section.")
@@ -53,7 +52,13 @@ class Section(BaseModel):
 
 class SummaryItem(BaseModel):
     label: str = Field(description="Short anatomical label (e.g. 'ACL Graft', 'Lateral Meniscus Repair').")
-    status: Literal["normal", "attention", "significant"] = Field(description="Overall status for this structure.")
+    status: Literal["normal", "attention", "significant"] = Field(
+        description=(
+            "'normal' — no relevant findings for this structure. "
+            "'attention' — findings present but not expected to alter clinical management; monitor. "
+            "'significant' — findings that may alter clinical management and require priority radiologist review."
+        )
+    )
     text: str = Field(description="One-sentence plain-language summary of the finding.")
 
 
