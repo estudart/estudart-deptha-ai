@@ -42,6 +42,11 @@ class AnalyseExamRequest(BaseModel):
         le=40,
         description="Number of evenly-spaced slices to sample per MRI series. Higher values increase accuracy but also API cost and latency.",
     )
+    language: str = Field(
+        default="English",
+        description="Language for the report output. Examples: 'English', 'Portuguese', 'Spanish', 'French'.",
+        examples=["English", "Portuguese"],
+    )
 
 
 class AnalyseExamResponse(BaseModel):
@@ -53,13 +58,14 @@ class AnalyseExamResponse(BaseModel):
 # Background task
 # ---------------------------------------------------------------------------
 
-def _run_analysis(input_path: str, patient_context: str, slices_per_series: int, output_dir: Path) -> None:
+def _run_analysis(input_path: str, patient_context: str, slices_per_series: int, output_language: str, output_dir: Path) -> None:
     log = get_logger()
     service = get_analysis_service()
     report = service.run(
         input_path=Path(input_path),
         patient_context=patient_context,
         slices_per_series=slices_per_series,
+        output_language=output_language,
     )
     report.save_to_dir(output_dir)
     log.info("Report saved", md=str(output_dir / "report.md"), pdf=str(output_dir / "report.pdf"))
@@ -100,6 +106,7 @@ def analyse_exam(body: AnalyseExamRequest, background_tasks: BackgroundTasks) ->
         body.input_path,
         body.patient_context,
         body.slices_per_series,
+        body.language,
         output_dir,
     )
 

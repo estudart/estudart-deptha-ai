@@ -33,6 +33,7 @@ class AnalysisService:
         patient_context: str,
         prompt_path: Path | None = _DEFAULT_PROMPT,
         slices_per_series: int = 8,
+        output_language: str = "English",
     ) -> Report:
         tmp_dir = None
 
@@ -72,8 +73,8 @@ class AnalysisService:
             if total_images > 80:
                 self._log.warning("Large image payload — GPT-4o may refuse or truncate", total_images=total_images, suggestion="reduce --slices")
 
-            self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path))
-            raw = self._openai_client.call_vision(images, patient_context, prompt_path)
+            self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path), language=output_language)
+            raw = self._openai_client.call_vision(images, patient_context, prompt_path, output_language)
             analysis = AnalysisResult.model_validate(raw)
             self._log.info("GPT-4o response received", sections=len(analysis.sections))
 

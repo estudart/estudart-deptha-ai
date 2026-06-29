@@ -16,13 +16,17 @@ class OpenAIClient:
         prompt: str,
         patient_context: str,
         images_by_series: dict[str, list[str]],
+        output_language: str = "English",
     ) -> list[dict]:
         filled = (
             prompt
             .replace("{patient_context}", patient_context)
             .replace("{output_schema}", self._output_schema)
         )
-        content: list[dict] = [{"type": "text", "text": filled}]
+        content: list[dict] = [
+            {"type": "text", "text": filled},
+            {"type": "text", "text": f"IMPORTANT: Write all text fields in the JSON response in {output_language}."},
+        ]
 
         for label, b64_list in images_by_series.items():
             content.append({"type": "text", "text": f"\n--- Series: {label} ---"})
@@ -44,9 +48,10 @@ class OpenAIClient:
         images_by_series: dict[str, list[str]],
         patient_context: str,
         prompt_path: Path | None = None,
+        output_language: str = "English",
     ) -> dict:
         prompt = self._load_prompt(prompt_path)
-        content = self._build_content(prompt, patient_context, images_by_series)
+        content = self._build_content(prompt, patient_context, images_by_series, output_language)
 
         response = self._client.chat.completions.create(
             model=self._model,
