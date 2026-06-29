@@ -52,7 +52,7 @@ class OpenAIClient:
             for b64 in b64_list:
                 content.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "high"},
+                    "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "low"},
                 })
 
         return content
