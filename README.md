@@ -82,7 +82,7 @@ OPENAI_MODEL=gpt-4o   # optional, defaults to gpt-4o
 ## Usage
 
 ```bash
-python main.py \
+python -m src.main \
   --input  data/input/exam.zip \
   --context "Post-op ACL reconstruction + lateral meniscal suture, 3 months. Pain and joint locking."
 ```
