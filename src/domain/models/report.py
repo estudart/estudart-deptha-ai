@@ -561,13 +561,15 @@ class _ReportPDF(FPDF):
         line_h = 5.5
 
         for idx, (label, value) in enumerate(rows):
-            row_y = self.get_y()
-
             # Measure how tall the value will be
             self.set_font("Helvetica", "", 9)
-            # Use a throw-away multi_cell in dry-run to count lines
             lines = self._count_lines(_clean(value), val_w, line_h)
             row_h = max(lines * line_h + 4, 10)
+
+            if self.get_y() + row_h > 272:
+                self.add_page()
+
+            row_y = self.get_y()
 
             # Label background
             lbl_c = _CARD_HDR if idx % 2 == 0 else (35, 35, 50)
