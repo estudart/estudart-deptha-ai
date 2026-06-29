@@ -67,12 +67,12 @@ def _status_colour(text: str) -> tuple:
 
 def _status_label(text: str) -> str:
     lower = text.lower()
-    if any(k in lower for k in ("no evidence", "criteria for suture failure not met", "not met", "no tear", "intact", "integro", "normal", "preservad")):
-        return "No significant finding"
-    if any(k in lower for k in ("edema", "mild", "effusion", "heterogeneous", "post-surgical", "post-repair")):
-        return "Attention"
     if any(k in lower for k in ("failure", "torn", "ruptur", "rotura", "displaced", "fractur")):
         return "Significant finding"
+    if any(k in lower for k in ("edema", "effusion", "heterogeneous", "post-surgical", "post-repair")):
+        return "Attention"
+    if any(k in lower for k in ("no evidence", "criteria for suture failure not met", "not met", "no tear", "intact", "integro", "normal", "preservad")):
+        return "No significant finding"
     return "See findings"
 
 
@@ -314,7 +314,14 @@ class _ReportPDF(FPDF):
                 img_buf = io.BytesIO(base64.b64decode(mid))
 
         text_w = self.epw - (img_size + 4 if img_buf else 0)
-        y_start = self.get_y()
+
+        # Ensure the card header + image (if any) won't be orphaned at the bottom of the page
+        min_height = max(img_size + 6, 24) if img_buf else 24
+        if self.get_y() + min_height > 272:
+            self.add_page()
+
+        start_page = self.page
+        y_start    = self.get_y()
 
         # Header bar
         self.set_fill_color(245, 247, 252)
@@ -336,19 +343,19 @@ class _ReportPDF(FPDF):
 
         y_end = self.get_y() + 2
 
-        # Embed image aligned to right of card, vertically centred
-        if img_buf:
+        # Embed image — only if we are still on the same page as the card start
+        if img_buf and self.page == start_page:
             img_x = self.M + text_w + 2
             img_y = y_start + max(0, (y_end - y_start - img_size) / 2)
-            # ensure image fits on page
-            if img_y + img_size > 277:
+            if img_y + img_size > 272:
                 img_y = y_start
             self.image(img_buf, x=img_x, y=img_y, w=img_size, h=img_size)
             y_end = max(y_end, img_y + img_size + 2)
 
-        # Left accent bar
-        self.set_fill_color(*colour)
-        self.rect(self.M, y_start, 3, y_end - y_start, "F")
+        # Left accent bar — only when still on the same page
+        if self.page == start_page:
+            self.set_fill_color(*colour)
+            self.rect(self.M, y_start, 3, y_end - y_start, "F")
 
         self.set_y(y_end)
         self.ln(5)

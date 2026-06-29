@@ -1,6 +1,6 @@
 # Deptha
 
-AI-assisted MRI analysis pipeline. Upload a DICOM exam, provide clinical context, and get a structured radiological report powered by GPT-4o vision.
+AI-assisted MRI analysis pipeline. Upload a DICOM exam, provide clinical context, and get a structured radiological report powered by GPT-4o vision — as a CLI command or a REST API.
 
 ## Overview
 
@@ -11,25 +11,31 @@ Deptha processes MRI DICOM files through a four-step pipeline:
 3. **Encode** — applies window/level normalization and converts slices to base64 PNG
 4. **Analyze** — sends images + clinical context to GPT-4o and returns a structured report
 
+The output is a timestamped folder containing a Markdown report and a formatted PDF with per-section findings cards, status badges, and embedded imaging evidence.
+
 ### Architecture
 
 ```
 src/
 ├── domain/
 │   └── models/
-│       └── report.py         # Report domain model (saves .md and .pdf)
-├── infrastructure/           # external world (DICOM I/O, image encoding, OpenAI API)
-│   ├── dicom_reader.py       # DicomReader
-│   ├── image_encoder.py      # ImageEncoder
-│   └── openai_client.py      # OpenAIClient
-├── application/              # business logic
+│       └── report.py              # Report domain model — saves .md and .pdf
+├── infrastructure/                # Connections to the external world
+│   ├── dicom_reader.py            # DicomReader
+│   ├── image_encoder.py           # ImageEncoder
+│   └── openai_client.py           # OpenAIClient
+├── application/                   # Business logic
 │   ├── entities/
-│   │   └── series_summary.py # SeriesSummary entity
+│   │   └── series_summary.py      # SeriesSummary entity
+│   ├── prompts/
+│   │   └── prompt_knee.md         # Structured knee MRI prompt for GPT-4o
 │   └── services/
-│       └── analysis_service.py  # AnalysisService
-└── presentation/             # user-facing interface
-    ├── cli.py                # CLI
-    └── dependencies.py       # singleton wiring
+│       └── analysis_service.py    # AnalysisService — orchestrates the pipeline
+└── presentation/                  # Client-facing interfaces
+    ├── cli.py                     # CLI
+    ├── dependencies.py            # Singleton dependency wiring
+    └── routes/
+        └── magnetic_resonance.py  # FastAPI router
 ```
 
 Dependencies flow inward only: `presentation → application → infrastructure`.
@@ -43,7 +49,7 @@ Dependencies flow inward only: `presentation → application → infrastructure`
 
 ## Setup
 
-**1. Clone and navigate to the project:**
+**1. Navigate to the project:**
 
 ```bash
 cd Deptha
@@ -59,12 +65,10 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 **3. Install dependencies:**
 
 ```bash
-pip install pydicom Pillow openai python-dotenv numpy fpdf2
+pip install pydicom Pillow openai python-dotenv numpy fpdf2 "fastapi>=0.111" "uvicorn[standard]>=0.29"
 ```
 
 **4. Configure environment variables:**
-
-Copy `.env.example` to `.env` and fill in your key:
 
 ```bash
 cp .env.example .env
@@ -81,13 +85,15 @@ OPENAI_MODEL=gpt-4o   # optional, defaults to gpt-4o
 
 ## Usage
 
-```bash
-python -m src.main \
-  --input  data/input/exam.zip \
-  --context "Post-op ACL reconstruction + lateral meniscal suture, 3 months. Pain and joint locking."
-```
+### CLI
 
-### Options
+```bash
+python -m src.presentation.cli \
+  --input  data/input/exam.zip \
+  --context "Post-op ACL reconstruction + lateral meniscal suture, 3 months. \
+             Intermittent joint locking and pain on full extension. Mild effusion on clinical exam." \
+  --slices 8
+```
 
 | Flag | Required | Default | Description |
 |---|---|---|---|
@@ -95,30 +101,70 @@ python -m src.main \
 | `--context` | yes | — | Free-text clinical context for the patient |
 | `--slices` | no | `5` | Number of slices to sample per series |
 
-### Prompts
+---
 
-The analysis prompt is resolved automatically by the service from `src/application/prompts/prompt_knee.md`. No CLI flag needed. To add a new prompt for a different body part, place a `.md` file in that directory — it must contain `{patient_context}` as a placeholder.
+### API
+
+Start the server:
+
+```bash
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Interactive API docs are available automatically at:
+
+- **Swagger UI** → [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc** → [http://localhost:8000/redoc](http://localhost:8000/redoc)
+
+#### Submit an exam for analysis
+
+```bash
+curl -X POST http://localhost:8000/magnetic-resonance/analyse-exam \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_path": "data/input/exam.zip",
+    "patient_context": "Post-op ACL reconstruction + lateral meniscal suture, 3 months. Intermittent joint locking and pain on full extension. Mild effusion on clinical exam.",
+    "slices_per_series": 8
+  }'
+```
+
+**Response — 202 Accepted:**
+
+```json
+{
+  "message": "Analysis queued. The report will be written to the output directory once processing completes.",
+  "output_dir": "data/output/2026-06-29_14-30-00"
+}
+```
+
+The endpoint returns immediately. The full pipeline runs in the background — once complete, the report is written to `output_dir`.
+
+#### Health check
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok"}
+```
 
 ---
 
 ## Output
 
-Each run creates a timestamped folder under `data/output/` containing two files:
+Each run creates a timestamped folder under `data/output/`:
 
 ```
 data/output/
-└── 2026-06-29_12-01-05/
-    ├── report.md    ← full markdown report
-    └── report.pdf   ← formatted PDF for sharing with non-technical users
+└── 2026-06-29_14-30-00/
+    ├── report.md    ← full Markdown report
+    └── report.pdf   ← formatted PDF with findings cards and imaging evidence
 ```
 
 Both files include:
 
 - Metadata for each series (modality, total slices, slices analysed)
-- Structured radiological findings
-- Clinical correlation and contextual observations
-
-The analysis is also printed to stdout at the end of the run.
+- Structured radiological findings with status classification
+- Per-section embedded DICOM images (PDF only)
+- Clinical correlation and a direct answer to the clinical question
 
 ---
 

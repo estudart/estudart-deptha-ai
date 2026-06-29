@@ -10,6 +10,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "numpy>=1.26",
     "fpdf2>=2.7",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",
 ]
 
 [dependency-groups]
