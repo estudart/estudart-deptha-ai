@@ -296,10 +296,10 @@ class _ReportPDF(FPDF):
         )
         if not key:
             return []
-        slices = encoded_images[key]
+        slices  = encoded_images[key]
         indices = section.best_slice_indices
         if not indices:
-            mid = len(slices) // 2
+            mid     = len(slices) // 2
             indices = [mid]
         valid = [i for i in indices if 0 <= i < len(slices)][:3]
         if not valid:

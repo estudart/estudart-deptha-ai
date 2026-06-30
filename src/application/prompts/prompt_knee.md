@@ -332,7 +332,7 @@ The JSON must conform to this schema:
 - **Synovium and Effusion:** axial fat-saturated — look for "AXI" in the label
 - **Patellar Alignment:** axial — look for "AXI" in the label. Never use a sagittal series here.
 
-**best_slice_indices** — List of 2–3 0-based slice indices within the chosen series that best demonstrate the key findings for this section. Order by diagnostic importance — most important (most abnormal) first. For ligament sections, prioritize slices showing the most abnormal signal. Omit if uncertain.
+**best_slice_indices** — List of 2–3 0-based slice indices that show the actual finding you described in your analysis. These must be the slices where you saw the abnormality — not a generic representative slice, not the middle of the stack. If you described increased ACL signal on slice 14, pick slice 14. If you described a meniscal fragment on slice 8, pick slice 8. The images rendered in the report must be evidence for your conclusion — a reviewer should look at them and see exactly what you described.
 
 **Required sections** (always include all, in this order):
 1. Ligaments (ACL, PCL)
