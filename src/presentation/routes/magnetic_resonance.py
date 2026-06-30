@@ -84,7 +84,7 @@ def _run_analysis(input_path: str, patient_context: str, slices_per_series: int,
         "Accepts a DICOM exam (zip archive or directory path) and a clinical context string, "
         "then queues the full analysis pipeline as a background task.\n\n"
         "The endpoint returns **immediately** with HTTP 202 — the analysis runs asynchronously "
-        "via GPT-4o vision. Once complete, a structured report is written to the `output_dir` "
+        "via AI vision. Once complete, a structured report is written to the `output_dir` "
         "returned in the response, containing:\n\n"
         "- `report.md` — full Markdown report\n"
         "- `report.pdf` — formatted PDF with findings cards and embedded imaging evidence\n\n"

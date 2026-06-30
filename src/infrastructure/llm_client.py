@@ -38,9 +38,19 @@ class LLMClient:
             HumanMessage(content=patient_context),
         ])
         try:
-            raw = json.loads(response.content)
-            return raw.get("profile", "native_trauma")
+            raw = response.content.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            return json.loads(raw).get("profile", "native_trauma")
         except Exception:
+            # Last resort: keyword scan
+            lower = response.content.lower()
+            if "post_op" in lower or "post-op" in lower:
+                return "post_op"
+            if "degenerative" in lower:
+                return "degenerative"
             return "native_trauma"
 
     # ------------------------------------------------------------------
@@ -74,13 +84,7 @@ class LLMClient:
         raw = response.content
         if not raw or not raw.strip():
             raise ValueError("LLM returned an empty response. Payload may be too large.")
-        # Strip accidental markdown code fences
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw)
+        return self._extract_json(raw)
 
     # ------------------------------------------------------------------
     # Content builder
@@ -206,6 +210,32 @@ class LLMClient:
                     })
 
         return content
+
+    def _extract_json(self, raw: str) -> dict:
+        """Robustly extract a JSON object from LLM output that may contain markdown fences or trailing text."""
+        raw = raw.strip()
+        # Strip markdown code fences
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        # Extract the outermost JSON object — handles trailing text after closing brace
+        start = raw.find("{")
+        if start == -1:
+            raise ValueError("No JSON object found in LLM response.")
+        depth, end = 0, -1
+        for i, ch in enumerate(raw[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end == -1:
+            raise ValueError("Unterminated JSON object in LLM response.")
+        return json.loads(raw[start:end + 1])
 
     def _load_prompt(self, prompt_path: Path | None) -> str:
         if prompt_path and prompt_path.exists():

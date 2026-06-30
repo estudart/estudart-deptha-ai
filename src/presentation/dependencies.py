@@ -53,7 +53,6 @@ def _make_chat_model() -> BaseChatModel:
             google_api_key=os.environ["GOOGLE_API_KEY"],
             temperature=0,
             max_output_tokens=8192,
-            generation_config={"response_mime_type": "application/json"},
         )
 
     if provider == "anthropic":

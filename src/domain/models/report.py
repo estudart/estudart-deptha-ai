@@ -702,7 +702,7 @@ class _ReportPDF(FPDF):
         self.set_text_color(*_TEXT_LABEL)
         self.multi_cell(
             self.epw, 4.5,
-            "This report was generated with AI assistance (DepthAI / GPT-4o) based on direct analysis "
+            "This report was generated with AI assistance (DepthAI) based on direct analysis "
             "of DICOM images and clinical context provided by the user. It does NOT replace an official "
             "radiological report issued by a licensed radiologist, nor a clinical examination. "
             "All clinical decisions must be made exclusively by the responsible physician.",

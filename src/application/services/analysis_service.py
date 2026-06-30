@@ -130,7 +130,7 @@ class AnalysisService:
             self._log.info("Encoding complete", total_images_encoded=total_images)
             if total_images > 80:
                 self._log.warning(
-                    "Large image payload — GPT-4o may refuse or truncate",
+                    "Large image payload — LLM may refuse or truncate",
                     total_images=total_images,
                     suggestion="reduce --slices",
                 )
@@ -143,12 +143,12 @@ class AnalysisService:
                 routing={s: v for s, v in section_routing.items() if v},
             )
 
-            self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path), language=output_language)
+            self._log.info("Sending request to LLM vision", prompt=str(prompt_path), language=output_language)
             raw = self._llm_client.call_vision(
                 images, patient_context, prompt_path, output_language, laterality, section_routing
             )
             analysis = AnalysisResult.model_validate(raw)
-            self._log.info("GPT-4o response received", sections=len(analysis.sections))
+            self._log.info("LLM response received", sections=len(analysis.sections))
 
             summaries = [
                 SeriesSummary(
