@@ -6,7 +6,6 @@ requires-python = ">=3.11"
 dependencies = [
     "pydicom>=2.4",
     "Pillow>=10.0",
-    "openai>=1.30",
     "langchain-core>=0.3",
     "langchain-openai>=0.3",
     "langchain-google-genai>=2.0",
@@ -18,7 +17,6 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "python-multipart>=0.0.9",
     "pymupdf>=1.28.0",
-    "monai>=1.6.0",
 ]
 
 [dependency-groups]
