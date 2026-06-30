@@ -18,11 +18,13 @@ class Section(BaseModel):
             "Prefer sagittal for ligaments/cartilage/bone, coronal for meniscal body/extrusion, axial for synovium."
         ),
     )
-    best_slice_index: int | None = Field(
+    best_slice_indices: list[int] | None = Field(
         default=None,
         description=(
-            "0-based index of the single slice within the chosen series that most clearly "
-            "demonstrates the key finding for this section. Omit if uncertain."
+            "List of 2–3 0-based slice indices within the chosen series that best demonstrate "
+            "the key findings for this section. Order them by diagnostic importance — most "
+            "important first. For ligament sections choose slices showing the most abnormal signal. "
+            "Omit if uncertain."
         ),
     )
     status: Literal["normal", "attention", "significant"] = Field(

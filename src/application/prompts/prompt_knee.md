@@ -288,7 +288,7 @@ The JSON must conform to this schema:
 - Synovium and Effusion: **axial fat-saturated**
 - Patellar Alignment: **axial**
 
-**best_slice_index** — 0-based index of the slice that most clearly demonstrates the **key abnormal finding** for this section. For ligament sections, choose the slice showing the most abnormal signal — not the most normal-looking slice. Omit if uncertain.
+**best_slice_indices** — List of 2–3 0-based slice indices within the chosen series that best demonstrate the key findings for this section. Order by diagnostic importance — most important (most abnormal) first. For ligament sections, prioritize slices showing the most abnormal signal. Omit if uncertain.
 
 **Required sections** (always include all, in this order):
 1. Ligaments (ACL, PCL)

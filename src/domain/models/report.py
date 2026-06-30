@@ -166,7 +166,7 @@ class _ReportPDF(FPDF):
         self._section_header("3. DETAILED FINDINGS")
 
         for sec in report.analysis.sections:
-            self._section_card(sec, self._resolve_image(sec, report.encoded_images))
+            self._section_card(sec, self._resolve_images(sec, report.encoded_images))
 
         self._summary_section(report.analysis.summary)
         self._clinical_answer(report.analysis.clinical_answer)
@@ -286,23 +286,29 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ section card
 
-    def _resolve_image(self, section: Section, encoded_images: dict[str, list[str]]) -> io.BytesIO | None:
+    def _resolve_images(self, section: Section, encoded_images: dict[str, list[str]]) -> list[io.BytesIO]:
         if not encoded_images or not section.series_label:
-            return None
+            return []
         key = next(
             (k for k in encoded_images
              if section.series_label.lower() in k.lower() or k.lower() in section.series_label.lower()),
             None,
         )
         if not key:
-            return None
+            return []
         slices = encoded_images[key]
-        idx = section.best_slice_index
-        if idx is None or idx < 0 or idx >= len(slices):
-            idx = len(slices) // 2
-        return io.BytesIO(base64.b64decode(slices[idx]))
+        indices = section.best_slice_indices
+        if not indices:
+            mid = len(slices) // 2
+            indices = [mid]
+        valid = [i for i in indices if 0 <= i < len(slices)][:3]
+        if not valid:
+            valid = [len(slices) // 2]
+        return [io.BytesIO(base64.b64decode(slices[i])) for i in valid]
 
-    def _estimate_card_height(self, section: Section, text_w: float) -> float:
+    _IMG_STRIP_H = 46  # height of image strip row
+
+    def _estimate_card_height(self, section: Section, text_w: float, has_images: bool) -> float:
         h = 14  # header + gap
         for sub in section.subsections:
             h += self._count_lines(_clean(sub.title), text_w - 8, 5) * 5 + 3
@@ -315,26 +321,26 @@ class _ReportPDF(FPDF):
         if section.notes:
             total = sum(self._count_lines(_clean(n), text_w - 20, 5) for n in section.notes)
             h += total * 5 + len(section.notes) * 2 + 12
+        if has_images:
+            h += self._IMG_STRIP_H + 4
         return h
 
-    def _section_card(self, section: Section, img_buf: io.BytesIO | None) -> None:
-        colour   = _STATUS_COLOUR.get(section.status, _ACCENT_BLUE)
-        label    = _STATUS_LABEL.get(section.status, "See findings")
-        img_size = 44
+    def _section_card(self, section: Section, img_bufs: list[io.BytesIO]) -> None:
+        colour  = _STATUS_COLOUR.get(section.status, _ACCENT_BLUE)
+        label   = _STATUS_LABEL.get(section.status, "See findings")
 
-        text_w    = self.epw - (img_size + 6 if img_buf else 0)
-        est_h     = self._estimate_card_height(section, text_w)
-        min_h     = max(est_h, img_size + 8 if img_buf else est_h)
+        text_w  = self.epw
+        est_h   = self._estimate_card_height(section, text_w, bool(img_bufs))
 
         # Page break — keep entire card together
-        if self.get_y() + min_h > 272:
+        if self.get_y() + est_h > 272:
             self.add_page()
 
         y_start = self.get_y()
 
-        # Card body background (drawn first, single pass)
+        # Card body background
         self.set_fill_color(*_CARD_BG)
-        self.rect(self.M, y_start + 10, text_w, max(min_h - 10, 20), "F")
+        self.rect(self.M, y_start + 10, text_w, max(est_h - 10, 20), "F")
 
         # Card header
         self.set_fill_color(*_CARD_HDR)
@@ -355,7 +361,7 @@ class _ReportPDF(FPDF):
         self.cell(6, 8, "", ln=True)  # right padding
         self.ln(2)
 
-        # Content — single pass, no re-render
+        # Content — single pass
         for sub in section.subsections:
             self._render_subsection(sub, text_w)
         if section.reasoning:
@@ -363,30 +369,38 @@ class _ReportPDF(FPDF):
         if section.notes:
             self._render_notes(section.notes, text_w)
 
+        # Image strip
+        if img_bufs:
+            self._render_image_strip(img_bufs, text_w)
+
         y_end = self.get_y() + 2
 
-        # DICOM image
-        if img_buf:
-            img_x = self.M + text_w + 4
-            img_y = y_start + max(0, (y_end - y_start - img_size) / 2)
-            if img_y + img_size > 272:
-                img_y = y_start + 12
-            pad = 2
-            self.set_fill_color(*_WHITE)
-            self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "F")
-            self.image(img_buf, x=img_x, y=img_y, w=img_size, h=img_size)
-            self.set_draw_color(*_IMG_BORDER)
-            self.set_line_width(0.3)
-            self.rect(img_x - pad, img_y - pad, img_size + pad * 2, img_size + pad * 2, "D")
-            self.set_line_width(0.2)
-            y_end = max(y_end, img_y + img_size + pad + 2)
-
-        # Left accent bar — drawn last so it sits on top
+        # Left accent bar
         self.set_fill_color(*colour)
         self.rect(self.M, y_start, 3, y_end - y_start, "F")
 
         self.set_y(y_end)
         self.ln(4)
+
+    def _render_image_strip(self, img_bufs: list[io.BytesIO], text_w: float) -> None:
+        n       = len(img_bufs)
+        gap     = 3
+        img_w   = (text_w - gap * (n - 1)) / n
+        img_h   = self._IMG_STRIP_H
+        pad     = 2
+        strip_y = self.get_y() + 3
+
+        for i, buf in enumerate(img_bufs):
+            x = self.M + i * (img_w + gap)
+            self.set_fill_color(*_WHITE)
+            self.rect(x - pad, strip_y - pad, img_w + pad * 2, img_h + pad * 2, "F")
+            self.image(buf, x=x, y=strip_y, w=img_w, h=img_h)
+            self.set_draw_color(*_IMG_BORDER)
+            self.set_line_width(0.3)
+            self.rect(x - pad, strip_y - pad, img_w + pad * 2, img_h + pad * 2, "D")
+            self.set_line_width(0.2)
+
+        self.set_y(strip_y + img_h + pad + 2)
 
     def _render_subsection(self, sub, text_w: float) -> None:
         x = self.M + 6
