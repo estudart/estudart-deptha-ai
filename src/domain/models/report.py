@@ -385,13 +385,16 @@ class _ReportPDF(FPDF):
     def _render_image_strip(self, img_bufs: list[io.BytesIO], text_w: float) -> None:
         n       = len(img_bufs)
         gap     = 3
-        img_w   = (text_w - gap * (n - 1)) / n
-        img_h   = self._IMG_STRIP_H
         pad     = 2
+        # subtract pads from both outer edges so strip stays within card bounds
+        strip_w = text_w - pad * 2
+        img_w   = (strip_w - gap * (n - 1)) / n
+        img_h   = self._IMG_STRIP_H
         strip_y = self.get_y() + 3
+        x0      = self.M + pad  # start inset by one pad
 
         for i, buf in enumerate(img_bufs):
-            x = self.M + i * (img_w + gap)
+            x = x0 + i * (img_w + gap)
             self.set_fill_color(*_WHITE)
             self.rect(x - pad, strip_y - pad, img_w + pad * 2, img_h + pad * 2, "F")
             self.image(buf, x=x, y=strip_y, w=img_w, h=img_h)
