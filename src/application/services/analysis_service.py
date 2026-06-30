@@ -1,6 +1,5 @@
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from src.application.entities.analysis_result import AnalysisResult
@@ -144,59 +143,13 @@ class AnalysisService:
                 routing={s: v for s, v in section_routing.items() if v},
             )
 
-            # Stage 2 — per-section vision analysis (parallel)
-            clinical_guidelines = self._llm_client._load_prompt(prompt_path)
-
-            section_tasks = {
-                section_name: {lbl: images[lbl] for lbl in series_labels if lbl in images}
-                for section_name, series_labels in section_routing.items()
-            }
-            section_tasks = {k: v for k, v in section_tasks.items() if v}  # drop empty
-
-            self._log.info("Analysing sections in parallel", count=len(section_tasks))
-
-            # Preserve section order from routing
-            section_order = [s for s in section_routing if s in section_tasks]
-            results_map: dict[str, dict] = {}
-
-            def _analyse_section(name: str, imgs: dict) -> tuple[str, dict]:
-                self._log.info(
-                    "  section started",
-                    section=name,
-                    images=sum(len(v) for v in imgs.values()),
-                )
-                result = self._llm_client.call_section_vision(
-                    name, imgs, patient_context,
-                    clinical_guidelines, laterality, output_language,
-                )
-                self._log.info("  section done", section=name, status=result.get("status"))
-                return name, result
-
-            with ThreadPoolExecutor(max_workers=len(section_tasks)) as executor:
-                futures = {
-                    executor.submit(_analyse_section, name, imgs): name
-                    for name, imgs in section_tasks.items()
-                }
-                for future in as_completed(futures):
-                    name, result = future.result()
-                    results_map[name] = result
-
-            sections: list[dict] = [results_map[s] for s in section_order if s in results_map]
-
-            # Stage 3 — synthesis (text only)
-            self._log.info("Synthesizing report", sections=len(sections))
-            synthesis = self._llm_client.call_synthesis(
-                sections, patient_context, clinical_guidelines, output_language
+            # Stage 2 — full vision analysis
+            self._log.info("Sending request to LLM vision", prompt=str(prompt_path), language=output_language)
+            raw = self._llm_client.call_vision(
+                images, patient_context, prompt_path, output_language, laterality, section_routing,
             )
-
-            raw = {
-                "sections": sections,
-                "summary": synthesis.get("summary", []),
-                "clinical_answer": synthesis.get("clinical_answer", {}),
-                "flags": synthesis.get("flags", []),
-            }
             analysis = AnalysisResult.model_validate(raw)
-            self._log.info("Analysis complete", sections=len(analysis.sections))
+            self._log.info("LLM response received", sections=len(analysis.sections))
 
             summaries = [
                 SeriesSummary(
