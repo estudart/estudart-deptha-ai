@@ -52,10 +52,6 @@ class DicomReader:
         return result
 
     def extract_laterality(self, series: dict[str, list[tuple[str, pydicom.Dataset]]]) -> str | None:
-        """
-        Extract knee laterality from DICOM metadata tags or series descriptions.
-        Returns 'Left', 'Right', or None if not determinable.
-        """
         for slices in series.values():
             for _, ds in slices[:3]:
                 for tag in ("Laterality", "ImageLaterality"):
@@ -84,18 +80,8 @@ class DicomReader:
         label: str = "",
     ) -> list[tuple[str, pydicom.Dataset]]:
         """
-        Select n representative slices from a series with center-bias.
-
-        All planes benefit from center-bias because key anatomy is almost always
-        in the middle of the acquisition:
-          - Sagittal: ACL/PCL in intercondylar notch, central meniscal body
-          - Coronal: ligament origins/insertions, central joint line
-          - Axial: patella, trochlea, mid-joint synovium
-
-        Strategy:
-          - 50% of quota → central third of the series
-          - 50% → uniform across full series (preserves peripheral coverage)
-          - deduplicate and sort by original order
+        Select n representative slices with center-bias (60% from central third, 40% uniform).
+        Key anatomy is almost always in the middle of the acquisition for all planes.
         """
         total = len(slices)
         if total <= n:
@@ -103,13 +89,12 @@ class DicomReader:
 
         if total >= 6:
             c_start = total // 3
-            c_end   = 2 * total // 3
+            c_end = 2 * total // 3
             central = slices[c_start:c_end + 1]
 
-            n_central = max(1, round(n * 0.50))
+            n_central = max(1, round(n * 0.60))
             n_uniform = max(1, n - n_central)
 
-            # Central samples
             if len(central) <= n_central:
                 c_indices: set[int] = {c_start + i for i in range(len(central))}
             else:
@@ -118,7 +103,6 @@ class DicomReader:
                     for i in range(n_central)
                 }
 
-            # Uniform samples across full series
             u_indices = {
                 round(i * (total - 1) / (n_uniform - 1))
                 for i in range(n_uniform)
@@ -127,9 +111,7 @@ class DicomReader:
             chosen = sorted(c_indices | u_indices)
             while len(chosen) > n:
                 chosen.pop()
-
             return [slices[i] for i in chosen]
 
-        # Very short series — uniform
         indices = {round(i * (total - 1) / (n - 1)) for i in range(n)}
         return [slices[i] for i in sorted(indices)]

@@ -7,7 +7,9 @@ from PIL import Image
 
 
 class ImageEncoder:
-    def encode_series(self, series: dict[str, list[tuple[str, pydicom.Dataset]]]) -> dict[str, dict[str, str]]:
+    def encode_series(
+        self, series: dict[str, list[tuple[str, pydicom.Dataset]]]
+    ) -> dict[str, dict[str, str]]:
         """Returns dict[series_label, dict[filename, base64_png]]."""
         return {
             label: {filename: self._to_base64_png(ds) for filename, ds in slices}
@@ -16,7 +18,7 @@ class ImageEncoder:
 
     def _to_base64_png(self, ds: pydicom.Dataset) -> str:
         arr = self._normalize(ds)
-        img = Image.fromarray(arr, mode="L").convert("RGB") if arr.ndim == 2 else Image.fromarray(arr)
+        img = Image.fromarray(arr, mode="L").convert("RGB")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -28,15 +30,9 @@ class ImageEncoder:
         intercept = float(getattr(ds, "RescaleIntercept", 0))
         arr = arr * slope + intercept
 
-        wc = getattr(ds, "WindowCenter", None)
-        ww = getattr(ds, "WindowWidth", None)
-
-        if wc is not None and ww is not None:
-            wc = float(wc[0]) if hasattr(wc, "__iter__") else float(wc)
-            ww = float(ww[0]) if hasattr(ww, "__iter__") else float(ww)
-            lo, hi = wc - ww / 2, wc + ww / 2
-        else:
-            lo, hi = arr.min(), arr.max()
+        # Percentile-based normalization — more robust than DICOM window/level for MRI
+        lo = float(np.percentile(arr, 1))
+        hi = float(np.percentile(arr, 99))
 
         arr = np.clip(arr, lo, hi)
         arr = (arr - lo) / (hi - lo) * 255 if hi > lo else np.zeros_like(arr)

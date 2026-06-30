@@ -18,6 +18,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "python-multipart>=0.0.9",
     "pymupdf>=1.28.0",
+    "monai>=1.6.0",
 ]
 
 [dependency-groups]
