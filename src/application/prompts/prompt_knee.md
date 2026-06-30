@@ -103,6 +103,12 @@ Step 4 — Distinguish double PCL from Humphrey's ligament:
 - Humphrey: thin, single, connects femur to posterior horn of LATERAL meniscus; does not taper; visible on consecutive slices following it to its insertion.
 - Bucket-handle fragment: broader, tapers anteriorly, originates from the torn meniscal body; confirm by checking the coronal for the absent body and the notch fragment.
 
+**→ TRIGGER: If you find a grade 3 meniscal tear of any type**, you MUST go back to the coronal series and examine every coronal slice through the intercondylar notch. Specifically look for:
+- Any dark tissue band or mass sitting between the femoral condyles in the intercondylar space — this is the displaced fragment
+- The native meniscal body in its compartment — if it looks absent, thin, or smaller than expected, the inner fragment has displaced into the notch
+- The fragment near the tibial spines is the most common location for a lateral bucket-handle fragment
+Do not report "no bucket-handle" until you have done this coronal review explicitly.
+
 Step 5 — Assign status:
 - Any confirmed displaced bucket-handle fragment = **significant** regardless of size.
 - Suspected but unconfirmed (e.g., bow-tie absent but no clear notch fragment) = **significant** with explicit uncertainty note for radiologist.

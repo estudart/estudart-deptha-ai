@@ -33,7 +33,7 @@ class OpenAIClient:
             for b64 in b64_list:
                 content.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "low"},
+                    "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "auto"},
                 })
 
         return content
@@ -56,7 +56,7 @@ class OpenAIClient:
         response = self._client.chat.completions.create(
             model=self._model,
             messages=[{"role": "user", "content": content}],
-            max_tokens=4096,
+            max_tokens=8192,
             temperature=0,
             response_format={"type": "json_object"},
         )
