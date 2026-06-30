@@ -84,6 +84,9 @@ class LLMClient:
         raw = response.content
         if not raw or not raw.strip():
             raise ValueError("LLM returned an empty response. Payload may be too large.")
+        # Debug: log first 300 chars so we can see what the model actually returned
+        preview = raw.strip()[:300].replace("\n", " ")
+        import sys; print(f"[LLM raw preview] {preview}", file=sys.stderr)
         return self._extract_json(raw)
 
     # ------------------------------------------------------------------
@@ -99,10 +102,16 @@ class LLMClient:
         laterality: str | None = None,
         section_routing: dict[str, list[str]] | None = None,
     ) -> list[dict]:
+        schema_block = (
+            "OUTPUT SCHEMA (JSON Schema — for reference only):\n"
+            "Respond with a single JSON *instance* that validates against this schema. "
+            "Do NOT return the schema itself.\n\n"
+            + self._output_schema
+        )
         filled = (
             prompt
             .replace("{patient_context}", patient_context)
-            .replace("{output_schema}", self._output_schema)
+            .replace("{output_schema}", schema_block)
         )
         content: list[dict] = [{"type": "text", "text": filled}]
 

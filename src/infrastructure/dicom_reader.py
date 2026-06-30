@@ -84,40 +84,34 @@ class DicomReader:
         label: str = "",
     ) -> list[tuple[str, pydicom.Dataset]]:
         """
-        Select n representative slices from a series.
+        Select n representative slices from a series with center-bias.
 
-        For sagittal series the ACL graft lives in the central ~30% of slices
-        (the intercondylar notch). Pure uniform sampling under-represents this zone
-        when n is small relative to total slices. Strategy:
-          - allocate ~40% of quota to the central third of the series
-          - distribute the remaining 60% uniformly across the full series
+        All planes benefit from center-bias because key anatomy is almost always
+        in the middle of the acquisition:
+          - Sagittal: ACL/PCL in intercondylar notch, central meniscal body
+          - Coronal: ligament origins/insertions, central joint line
+          - Axial: patella, trochlea, mid-joint synovium
+
+        Strategy:
+          - 50% of quota → central third of the series
+          - 50% → uniform across full series (preserves peripheral coverage)
           - deduplicate and sort by original order
-        For all other planes: uniform sampling.
         """
         total = len(slices)
         if total <= n:
             return slices
 
-        lower = label.lower()
-        # Sagittal: ACL graft in central slices (intercondylar notch)
-        # Coronal: ACL notch slices also in central third (anterior = soft tissue, posterior = popliteal)
-        is_sagittal = any(kw in lower for kw in ("sag", "sagital", "sagitt", "cruzado", "cruciate"))
-        is_coronal  = any(kw in lower for kw in ("cor", "coronal", "water", "fat:")) and not is_sagittal
-
-        if (is_sagittal or is_coronal) and total >= 9:
-            # Central zone: middle third of the series
+        if total >= 6:
             c_start = total // 3
             c_end   = 2 * total // 3
             central = slices[c_start:c_end + 1]
 
-            # Budget: 40% for centre, rest uniform
-            n_central  = max(1, round(n * 0.40))
-            n_uniform  = n - n_central
+            n_central = max(1, round(n * 0.50))
+            n_uniform = max(1, n - n_central)
 
-            # Centre samples
-            c_indices: set[int] = set()
+            # Central samples
             if len(central) <= n_central:
-                c_indices = {c_start + i for i in range(len(central))}
+                c_indices: set[int] = {c_start + i for i in range(len(central))}
             else:
                 c_indices = {
                     c_start + round(i * (len(central) - 1) / (n_central - 1))
@@ -131,12 +125,11 @@ class DicomReader:
             } if n_uniform > 1 else {0}
 
             chosen = sorted(c_indices | u_indices)
-            # Trim if over-budget due to set union
             while len(chosen) > n:
                 chosen.pop()
 
             return [slices[i] for i in chosen]
 
-        # Non-sagittal — uniform sampling
+        # Very short series — uniform
         indices = {round(i * (total - 1) / (n - 1)) for i in range(n)}
         return [slices[i] for i in sorted(indices)]
