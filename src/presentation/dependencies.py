@@ -91,7 +91,7 @@ def get_analysis_service() -> AnalysisService:
         _analysis_service = AnalysisService(
             dicom_reader=DicomReader(),
             image_encoder=ImageEncoder(),
-            openai_client=get_llm_client(),   # interface unchanged
+            llm_client=get_llm_client(),
             logger=get_logger(),
         )
     return _analysis_service

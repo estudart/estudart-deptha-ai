@@ -8,7 +8,7 @@ from src.domain.models.report import Report
 from src.infrastructure.dicom_reader import DicomReader
 from src.infrastructure.image_encoder import ImageEncoder
 from src.infrastructure.logger import Logger
-from src.infrastructure.llm_client import LLMClient as OpenAIClient  # alias — interface unchanged
+from src.infrastructure.llm_client import LLMClient
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -69,12 +69,12 @@ class AnalysisService:
         self,
         dicom_reader: DicomReader,
         image_encoder: ImageEncoder,
-        openai_client: OpenAIClient,
+        llm_client: LLMClient,
         logger: Logger,
     ) -> None:
         self._dicom_reader = dicom_reader
         self._image_encoder = image_encoder
-        self._openai_client = openai_client
+        self._llm_client = llm_client
         self._log = logger
 
     def run(
@@ -90,7 +90,7 @@ class AnalysisService:
             self._log.info("Pipeline started", input=str(input_path), slices_per_series=slices_per_series)
 
             # Stage 1 — classify patient profile and select prompt
-            profile     = self._openai_client.classify_patient(patient_context)
+            profile     = self._llm_client.classify_patient(patient_context)
             prompt_path = _PROMPT_REGISTRY.get(profile, _PROMPT_REGISTRY["native_trauma"])
             self._log.info("Patient classified", profile=profile, prompt=prompt_path.name)
 
@@ -144,7 +144,7 @@ class AnalysisService:
             )
 
             self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path), language=output_language)
-            raw = self._openai_client.call_vision(
+            raw = self._llm_client.call_vision(
                 images, patient_context, prompt_path, output_language, laterality, section_routing
             )
             analysis = AnalysisResult.model_validate(raw)

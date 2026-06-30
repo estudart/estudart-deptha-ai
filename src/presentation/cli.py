@@ -1,48 +1,37 @@
 import argparse
-import logging
-import sys
 from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from src.presentation.dependencies import get_analysis_service
+from src.presentation.dependencies import get_analysis_service, get_logger
 
 load_dotenv()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    stream=sys.stdout,
-)
-log = logging.getLogger("deptha")
 
 
 class CLI:
     def _parse_args(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(description="Deptha - AI MRI Analysis")
-        parser.add_argument("--input", required=True, type=Path, help="DICOM zip or directory")
-        parser.add_argument("--context", required=True, type=str, help="Patient clinical context")
-        parser.add_argument("--slices", type=int, default=5, help="Slices per series (default: 5)")
+        parser.add_argument("--input",    required=True, type=Path, help="DICOM zip or directory")
+        parser.add_argument("--context",  required=True, type=str,  help="Patient clinical context")
+        parser.add_argument("--slices",   type=int,      default=5,  help="Slices per series (default: 5)")
+        parser.add_argument("--language", type=str,      default="English", help="Output language (default: English)")
         return parser.parse_args()
 
     def run(self) -> None:
-        args = self._parse_args()
+        args   = self._parse_args()
+        log    = get_logger()
+        output = Path("data/output") / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-        output_dir = Path("data/output") / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-        log.info(f"Input: {args.input}")
-        log.info(f"Output dir: {output_dir}")
+        log.info("CLI invoked", input=str(args.input), output=str(output), language=args.language)
 
         service = get_analysis_service()
-        report = service.run(
+        report  = service.run(
             input_path=args.input,
             patient_context=args.context,
             slices_per_series=args.slices,
+            output_language=args.language,
         )
 
-        report.save_to_dir(output_dir)
-        log.info(f"Report saved -> {output_dir}/report.md and {output_dir}/report.pdf")
-
-        print("\n" + "=" * 60)
-        print(report.analysis.model_dump_json(indent=2))
+        report.save_to_dir(output)
+        log.info("Report saved", pdf=str(output / "report.pdf"))
