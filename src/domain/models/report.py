@@ -287,53 +287,57 @@ class _ReportPDF(FPDF):
     # ------------------------------------------------------------------ section card
 
     def _resolve_images(self, section: Section, encoded_images: dict[str, dict[str, str]]) -> list[io.BytesIO]:
-        if not encoded_images or not section.series_label:
+        if not encoded_images:
             return []
 
-        # --- Series key resolution ---
-        # 1. Exact match
-        # 2. Model label is a substring of the key (or vice versa)
-        # 3. Score by token overlap — pick highest scorer
-        target = section.series_label.lower()
-        target_tokens = set(target.replace(":", " ").split())
+        # Build a flat lookup: filename → b64 across ALL series
+        all_files: dict[str, str] = {}
+        for slices in encoded_images.values():
+            all_files.update(slices)
 
-        def _score(k: str) -> int:
-            kl = k.lower()
-            if kl == target:
-                return 1000
-            if target in kl or kl in target:
-                return 100
-            k_tokens = set(kl.replace(":", " ").split())
-            return len(target_tokens & k_tokens)
+        # --- Series key resolution (used for fallback ordering only) ---
+        if section.series_label:
+            target = section.series_label.lower()
+            target_tokens = set(target.replace(":", " ").split())
 
-        key = max(encoded_images.keys(), key=_score, default=None)
-        if not key or _score(key) == 0:
-            return []
+            def _score(k: str) -> int:
+                kl = k.lower()
+                if kl == target:
+                    return 1000
+                if target in kl or kl in target:
+                    return 100
+                k_tokens = set(kl.replace(":", " ").split())
+                return len(target_tokens & k_tokens)
 
-        slices_by_name = encoded_images[key]
-        filenames = section.best_slice_filenames
-        if filenames:
-            # look up by filename — exact match first, then fuzzy stem match
-            bufs = []
-            for fname in filenames[:3]:
-                if fname in slices_by_name:
-                    bufs.append(io.BytesIO(base64.b64decode(slices_by_name[fname])))
-                else:
-                    match = next(
-                        (k for k in slices_by_name
-                         if fname in k or k in fname or
-                         Path(fname).stem == Path(k).stem),
-                        None,
-                    )
-                    if match:
-                        bufs.append(io.BytesIO(base64.b64decode(slices_by_name[match])))
-            if bufs:
-                return bufs
+            best_key = max(encoded_images.keys(), key=_score, default=None)
+            primary_slices = encoded_images.get(best_key, {}) if best_key else {}
+        else:
+            primary_slices = next(iter(encoded_images.values()), {})
 
-        # Fallback: middle slice of the resolved series
-        names = list(slices_by_name.keys())
-        mid = names[len(names) // 2]
-        return [io.BytesIO(base64.b64decode(slices_by_name[mid]))]
+        # --- Filename lookup across ALL series ---
+        filenames = section.best_slice_filenames or []
+        bufs: list[io.BytesIO] = []
+        for fname in filenames[:3]:
+            # Exact match anywhere
+            if fname in all_files:
+                bufs.append(io.BytesIO(base64.b64decode(all_files[fname])))
+            else:
+                # Fuzzy stem match anywhere
+                match = next(
+                    (k for k in all_files
+                     if fname in k or k in fname or Path(fname).stem == Path(k).stem),
+                    None,
+                )
+                if match:
+                    bufs.append(io.BytesIO(base64.b64decode(all_files[match])))
+        if bufs:
+            return bufs
+
+        # Final fallback: 3 central slices from the primary series
+        names = list(primary_slices.keys()) or list(all_files.keys())
+        mid = len(names) // 2
+        chosen = names[max(0, mid - 1): mid + 2]
+        return [io.BytesIO(base64.b64decode(all_files[n])) for n in chosen if n in all_files]
 
     _IMG_STRIP_H = 46  # height of image strip row
 

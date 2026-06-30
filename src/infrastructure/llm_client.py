@@ -136,19 +136,22 @@ class LLMClient:
         result = self._extract_json(raw)
         result["title"] = section_name  # ensure title matches exactly
 
-        # Enforce valid filenames — if model hallucinated, fall back to central slices
-        valid = set(all_filenames)
-        filtered = [f for f in result.get("best_slice_filenames", []) if f in valid]
-        if not filtered:
-            # Deterministic fallback: pick up to 3 central filenames from section images
-            mid = len(all_filenames) // 2
-            filtered = all_filenames[max(0, mid - 1): mid + 2]
-        result["best_slice_filenames"] = filtered[:3]
-
         # Ensure series_label is one we actually sent
         valid_labels = list(section_images.keys())
         if result.get("series_label") not in valid_labels:
             result["series_label"] = valid_labels[0]
+
+        # Enforce valid filenames — must belong to the resolved series_label
+        primary_series = result["series_label"]
+        primary_filenames = list(section_images[primary_series].keys())
+        valid = set(all_filenames)
+
+        filtered = [f for f in result.get("best_slice_filenames", []) if f in valid]
+        if not filtered:
+            # Fallback: 3 central filenames from the primary series
+            mid = len(primary_filenames) // 2
+            filtered = primary_filenames[max(0, mid - 1): mid + 2]
+        result["best_slice_filenames"] = filtered[:3]
 
         return result
 
