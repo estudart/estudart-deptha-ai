@@ -20,6 +20,11 @@ from src.infrastructure.logger import Logger
 
 _MAX_IMAGES_PER_CALL = 10
 _IMAGE_EXTENSIONS    = {".jpg", ".jpeg", ".png"}
+_MIME_TYPES: dict[str, str] = {
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -30,8 +35,16 @@ _IMAGE_EXTENSIONS    = {".jpg", ".jpeg", ".png"}
 def list_sections() -> str:
     """
     List all anatomical sections available in this exam.
-    Returns a JSON array of {section, display_name, image_count}.
-    Always call this first to understand what is available.
+    Returns a JSON array of objects, each with:
+      - section: folder name to pass to get_images
+      - display_name: human-readable name
+      - image_count: total images in the section
+      - series: list of {name, start_index, end_index, count} — the individual
+                MRI series within this section, sorted alphabetically.
+                Use these index ranges to target specific sequences when calling
+                get_images (e.g. fetch sagittal PD slices by their index range,
+                not the middle of the entire section).
+    Always call this first to understand what is available before fetching images.
     """
     return "{}"   # stub — real execution via dispatch()
 
@@ -44,8 +57,10 @@ def get_images(
         (
             f"0-based image indices to fetch (0 = first slice, image_count-1 = last). "
             f"Max {_MAX_IMAGES_PER_CALL} per call. "
-            "Prefer the middle third — key anatomy lives there. "
-            "Call again with different indices if you need more coverage."
+            "Use the series index ranges from list_sections to target the right sequence — "
+            "e.g. sagittal PD/FS for menisci, coronal water for ligaments. "
+            "Do NOT blindly pick the middle of the entire section. "
+            "Call again with different indices for additional coverage."
         ),
     ],
 ) -> str:
@@ -88,11 +103,36 @@ def make_dispatch(
         for folder in sorted(organised_dir.iterdir()):
             if not folder.is_dir():
                 continue
-            images = [f for f in sorted(folder.iterdir()) if f.suffix in _IMAGE_EXTENSIONS]
+            images = sorted(f for f in folder.iterdir() if f.suffix in _IMAGE_EXTENSIONS)
+
+            # Build per-series index ranges so the agent can target specific sequences.
+            # Files are named  <series_slug>_slice_NNN.ext — group by the slug prefix
+            # (everything before "_slice_").
+            series_map: dict[str, list[int]] = {}
+            for global_idx, img in enumerate(images):
+                stem = img.stem  # e.g. "mr_pd_tse_fs_sag_slice_012"
+                marker = "_slice_"
+                if marker in stem:
+                    series_name = stem[: stem.rfind(marker)]
+                else:
+                    series_name = stem  # fallback: whole stem
+                series_map.setdefault(series_name, []).append(global_idx)
+
+            series_info = [
+                {
+                    "name":        name,
+                    "start_index": idxs[0],
+                    "end_index":   idxs[-1],
+                    "count":       len(idxs),
+                }
+                for name, idxs in series_map.items()
+            ]
+
             sections.append({
                 "section":      folder.name,
                 "display_name": _section_display_name(folder.name),
                 "image_count":  len(images),
+                "series":       series_info,
             })
         logger.info("list_sections", count=len(sections))
         return json.dumps(sections)
@@ -115,10 +155,12 @@ def make_dispatch(
             path     = files[idx]
             path_str = str(path)
             b64      = _load_image_b64(path)
+            mime     = _MIME_TYPES.get(path.suffix.lower(), "image/jpeg")
 
             bucket = images_used.setdefault(section, {})
-            bucket[path_str]            = path_str   # path tracked permanently
-            bucket[path_str + ":b64"]   = b64        # b64 stored transiently, popped after inject
+            bucket[path_str]              = path_str   # path tracked permanently
+            bucket[path_str + ":b64"]     = b64        # b64 stored transiently, popped after inject
+            bucket[path_str + ":mime"]    = mime       # mime type stored transiently, popped after inject
 
             fetched.append(path_str)
 

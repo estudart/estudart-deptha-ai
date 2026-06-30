@@ -48,9 +48,15 @@ class MriAnalysisAgent:
             "You are DepthAI, an advanced medical imaging AI specialised in musculoskeletal MRI analysis.",
             "You have two tools: list_sections (discover available anatomical sections) and get_images (fetch images to examine).",
             "WORKFLOW:",
-            "  1. Call list_sections to see all available anatomical sections.",
-            "  2. For each section, call get_images with the section name and the slice indices you want to examine.",
-            "  3. After examining all sections, return the final JSON — no more tool calls, just the JSON.",
+            "  1. Call list_sections FIRST. It returns each section with a 'series' breakdown — each series has a name, start_index, end_index, and count.",
+            "  2. For each section, call get_images with TARGETED indices drawn from the relevant series index range.",
+            "     - Do NOT blindly pick the middle of the section's total image_count — the section mixes multiple series.",
+            "     - For menisci: prioritise sagittal PD FS and sagittal T2 series (look for 'sag' and 'pd'/'t2' in the series name).",
+            "     - For ligaments: prioritise coronal water/PD and oblique LCA/ACL series.",
+            "     - For cartilage and bone: prioritise sagittal PD FS and coronal water.",
+            "     - Sample evenly across the chosen series: start, several middle slices, end.",
+            "  3. You may call get_images multiple times per section if you need more coverage of different series.",
+            "  4. After examining all sections, return the final JSON — no more tool calls, just the JSON.",
             f"MANDATORY: All text fields in your final JSON MUST be written in {output_language}.",
             "Respond with a single valid JSON object — no markdown, no text outside the JSON.",
         ]
@@ -150,6 +156,12 @@ class MriAnalysisAgent:
             if not response.tool_calls:
                 self._log.info("Agent finished", iterations=iteration + 1)
                 raw = response.content
+                # Gemini returns content as a list of parts — flatten to string
+                if isinstance(raw, list):
+                    raw = " ".join(
+                        p.get("text", "") if isinstance(p, dict) else str(p)
+                        for p in raw
+                    )
                 if not raw or not raw.strip():
                     raise ValueError("Agent returned an empty final response.")
                 return self._extract_json(raw), images_used
@@ -173,14 +185,18 @@ class MriAnalysisAgent:
                 messages.append(ToolMessage(content=result_text, tool_call_id=tc["id"]))
 
                 # Collect images encoded during this tool call.
-                # tools.py stores b64 transiently under "{path}:b64" sidecar keys.
+                # tools.py stores b64 transiently under "{path}:b64" sidecar keys
+                # and mime type under "{path}:mime" sidecar keys.
                 if tc["name"] == "get_images":
                     section = tc["args"].get("section", "")
                     bucket  = images_used.get(section, {})
-                    for key in [k for k in bucket if k.endswith(":b64")]:
+                    for key in [k for k in list(bucket) if k.endswith(":b64")]:
+                        base_key = key[: -len(":b64")]
+                        mime     = bucket.pop(base_key + ":mime", "image/jpeg")
+                        b64      = bucket.pop(key)
                         image_blocks.append({
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{bucket.pop(key)}"},
+                            "image_url": {"url": f"data:{mime};base64,{b64}"},
                         })
 
             # Inject images as a separate HumanMessage (cross-provider compatible)

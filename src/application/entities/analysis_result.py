@@ -14,7 +14,7 @@ class Section(BaseModel):
         default=[],
         description=(
             "Absolute file paths of the images you fetched and examined for this section, "
-            "exactly as returned by get_slices in the 'fetched_filenames' field. "
+            "exactly as returned by get_images in the 'fetched_paths' field. "
             "Include every path you actually looked at — these are used by the report builder "
             "to render the images. Order by diagnostic importance (most relevant first). "
             "2-3 paths is ideal."
