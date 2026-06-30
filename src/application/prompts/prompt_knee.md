@@ -216,8 +216,12 @@ Apply only to structures with explicitly mentioned surgical history.
 - Look for: cyclops lesion (low-signal nodule anterior to graft at intercondylar notch), arthrofibrosis, tunnel widening or cysts
 
 **Meniscal Repair / Suture**
-- Heterogeneity and intermediate signal at the repair site are expected for months to years
-- Flag as possible re-tear ONLY if clearly present: (a) T2-equivalent fluid signal through repair site to articular surface; (b) extrusion > 3 mm; (c) displaced fragment visible; (d) complete loss of normal meniscal morphology
+- Heterogeneity, intermediate signal, and even linear signal at the repair site are expected and NORMAL for months to years after suture repair. Do not call this a re-tear.
+- Suture material produces susceptibility artifacts — these appear as focal low-signal blooming on GRE sequences, or linear signal that does not follow fluid signal intensity. This is NOT a tear.
+- The single most important distinction: **fluid-equivalent signal** (as bright as joint fluid on T2/PD FS) extending completely through the repair site to the articular surface — this is the only reliable re-tear sign.
+- At < 6 months post-op: the threshold for flagging re-tear must be HIGH. Intermediate or mildly elevated signal at the repair site should be called "expected post-operative changes" not re-tear, unless the fluid-equivalent criterion is unambiguously met.
+- Flag as possible re-tear ONLY if ALL of the following are true: (a) the signal is clearly fluid-equivalent (as bright as the joint effusion) on T2/PD FS — not just intermediate or mildly elevated; AND (b) this fluid signal extends completely through the repair site to the articular surface on multiple consecutive images; AND ideally (c) one of: extrusion > 3 mm, displaced fragment, or complete loss of normal meniscal morphology
+- If only one criterion is met or the signal is ambiguous, describe it as "indeterminate — cannot exclude re-tear, recommend clinical correlation and follow-up MRI" rather than flagging as significant re-tear.
 
 **Hoffa's Fat Pad (Post-Arthroscopy)**
 - Horizontal low-signal fibrotic bands at portal sites are expected

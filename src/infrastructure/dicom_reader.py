@@ -50,6 +50,30 @@ class DicomReader:
             })
         return result
 
+    def extract_laterality(self, series: dict[str, list[pydicom.Dataset]]) -> str | None:
+        """
+        Extract knee laterality from DICOM metadata tags or series descriptions.
+        Returns 'Left', 'Right', or None if not determinable.
+        """
+        for slices in series.values():
+            for ds in slices[:3]:
+                # Standard DICOM laterality tags
+                for tag in ("Laterality", "ImageLaterality"):
+                    val = str(getattr(ds, tag, "") or "").strip().upper()
+                    if val in ("L", "LEFT"):
+                        return "Left"
+                    if val in ("R", "RIGHT"):
+                        return "Right"
+                # Fall back to series description keywords
+                desc = str(getattr(ds, "SeriesDescription", "") or "").lower()
+                study = str(getattr(ds, "StudyDescription", "") or "").lower()
+                for text in (desc, study):
+                    if "esquer" in text or " esq" in text or "left" in text or " le " in text:
+                        return "Left"
+                    if "direit" in text or " dir" in text or "right" in text or " ri " in text:
+                        return "Right"
+        return None
+
     def is_relevant(self, label: str) -> bool:
         lower = label.lower()
         return not any(kw in lower for kw in self.SKIP_KEYWORDS)

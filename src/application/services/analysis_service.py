@@ -11,7 +11,12 @@ from src.infrastructure.logger import Logger
 from src.infrastructure.openai_client import OpenAIClient
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-_DEFAULT_PROMPT = _PROMPTS_DIR / "prompt_knee.md"
+
+_PROMPT_REGISTRY: dict[str, Path] = {
+    "native_trauma": _PROMPTS_DIR / "prompt_knee_native_trauma.md",
+    "post_op":       _PROMPTS_DIR / "prompt_knee_postop.md",
+    "degenerative":  _PROMPTS_DIR / "prompt_knee_degenerative.md",
+}
 
 
 class AnalysisService:
@@ -31,7 +36,6 @@ class AnalysisService:
         self,
         input_path: Path,
         patient_context: str,
-        prompt_path: Path | None = _DEFAULT_PROMPT,
         slices_per_series: int = 8,
         output_language: str = "English",
     ) -> Report:
@@ -39,6 +43,15 @@ class AnalysisService:
 
         try:
             self._log.info("Pipeline started", input=str(input_path), slices_per_series=slices_per_series)
+
+            # Stage 1 — classify patient profile and select prompt
+            profile     = self._openai_client.classify_patient(patient_context)
+            prompt_path = _PROMPT_REGISTRY.get(profile, _PROMPT_REGISTRY["native_trauma"])
+            self._log.info("Patient classified", profile=profile, prompt=prompt_path.name)
+
+            # Extract laterality from DICOM metadata
+            laterality = self._dicom_reader.extract_laterality(all_series)
+            self._log.info("Laterality extracted", laterality=laterality or "unknown")
 
             dicom_dir, tmp_dir = self._resolve_input(input_path)
             self._log.info("Input resolved", dicom_dir=str(dicom_dir))
@@ -74,7 +87,7 @@ class AnalysisService:
                 self._log.warning("Large image payload — GPT-4o may refuse or truncate", total_images=total_images, suggestion="reduce --slices")
 
             self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path), language=output_language)
-            raw = self._openai_client.call_vision(images, patient_context, prompt_path, output_language)
+            raw = self._openai_client.call_vision(images, patient_context, prompt_path, output_language, laterality)
             analysis = AnalysisResult.model_validate(raw)
             self._log.info("GPT-4o response received", sections=len(analysis.sections))
 
