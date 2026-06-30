@@ -30,7 +30,8 @@ class OpenAIClient:
 
         for label, b64_list in images_by_series.items():
             content.append({"type": "text", "text": f"\n--- Series: {label} ---"})
-            for b64 in b64_list:
+            for idx, b64 in enumerate(b64_list):
+                content.append({"type": "text", "text": f"[Slice {idx}]"})
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "auto"},
