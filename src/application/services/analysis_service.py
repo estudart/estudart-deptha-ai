@@ -49,15 +49,15 @@ class AnalysisService:
             prompt_path = _PROMPT_REGISTRY.get(profile, _PROMPT_REGISTRY["native_trauma"])
             self._log.info("Patient classified", profile=profile, prompt=prompt_path.name)
 
-            # Extract laterality from DICOM metadata
-            laterality = self._dicom_reader.extract_laterality(all_series)
-            self._log.info("Laterality extracted", laterality=laterality or "unknown")
-
             dicom_dir, tmp_dir = self._resolve_input(input_path)
             self._log.info("Input resolved", dicom_dir=str(dicom_dir))
 
             all_series = self._dicom_reader.load_series(dicom_dir)
             self._log.info("DICOM series loaded", total_series=len(all_series))
+
+            # Extract laterality from DICOM metadata
+            laterality = self._dicom_reader.extract_laterality(all_series)
+            self._log.info("Laterality extracted", laterality=laterality or "unknown")
             for label, slices in all_series.items():
                 self._log.info("  series found", label=label, slices=len(slices))
 
