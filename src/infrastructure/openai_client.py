@@ -45,27 +45,34 @@ class OpenAIClient:
                 )
             content.append({"type": "text", "text": orientation_note})
 
-        content.append({"type": "text", "text": f"IMPORTANT: Write all text fields in the JSON response in {output_language}."})
+        # Language instruction placed prominently before images so it is not lost in the payload
+        content.append({"type": "text", "text": (
+            f"LANGUAGE REQUIREMENT — MANDATORY: Every text field in your JSON response "
+            f"(findings, reasoning, notes, summary text, clinical answer, flags) "
+            f"MUST be written in {output_language}. "
+            f"Do NOT use any other language. This overrides any language present in the images or prompt examples."
+        )})
 
-        # Image manifest — sent before any images so the model knows the full index
+        # Image manifest — sent before any images so the model knows what's available
         manifest = {
-            label: {"slice_count": len(b64_list), "indices": list(range(len(b64_list)))}
-            for label, b64_list in images_by_series.items()
+            label: list(slices_by_name.keys())
+            for label, slices_by_name in images_by_series.items()
         }
         content.append({
             "type": "text",
             "text": (
-                "IMAGE MANIFEST — complete index of all series and slices in this exam:\n"
+                "IMAGE MANIFEST — all series and their filenames in this exam:\n"
                 + json.dumps(manifest, indent=2)
-                + "\n\nUse the exact series labels and slice indices from this manifest "
-                "when populating series_label and best_slice_indices in your response."
+                + "\n\nEach image below is labeled [series_label | filename]. "
+                "Use the exact series_label and filenames from this manifest "
+                "when populating series_label and best_slice_filenames in your response."
             ),
         })
 
-        # Images — each fully labeled with series name and slice index inline
-        for label, b64_list in images_by_series.items():
-            for idx, b64 in enumerate(b64_list):
-                content.append({"type": "text", "text": f"[{label} | Slice {idx}]"})
+        # Images — each labeled with series name and its actual filename
+        for label, slices_by_name in images_by_series.items():
+            for filename, b64 in slices_by_name.items():
+                content.append({"type": "text", "text": f"[{label} | {filename}]"})
                 content.append({
                     "type": "image_url",
                     "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "auto"},
@@ -119,9 +126,16 @@ class OpenAIClient:
         prompt = self._load_prompt(prompt_path)
         content = self._build_content(prompt, patient_context, images_by_series, output_language, laterality)
 
+        system_msg = (
+            f"You are DepthAI, an advanced medical imaging AI assistant. "
+            f"IMPORTANT: All text in your JSON response MUST be written in {output_language}."
+        )
         response = self._client.chat.completions.create(
             model=self._model,
-            messages=[{"role": "user", "content": content}],
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user",   "content": content},
+            ],
             max_tokens=8192,
             temperature=0,
             response_format={"type": "json_object"},

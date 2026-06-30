@@ -1,19 +1,27 @@
-"""Singletons — all dependency instances are created and held here."""
+"""
+Composition root — all singletons created here.
+
+Model switching is done entirely via environment variables:
+  LLM_PROVIDER = openai (default) | google | anthropic
+  LLM_MODEL    = gpt-4o (default) | gemini-2.5-pro | claude-opus-4-5 | etc.
+
+No code changes needed to swap models.
+"""
 
 import json
 import os
 
-from openai import OpenAI
+from langchain_core.language_models import BaseChatModel
 
 from src.application.entities.analysis_result import AnalysisResult
 from src.application.services.analysis_service import AnalysisService
 from src.infrastructure.dicom_reader import DicomReader
 from src.infrastructure.image_encoder import ImageEncoder
+from src.infrastructure.llm_client import LLMClient
 from src.infrastructure.logger import Logger
-from src.infrastructure.openai_client import OpenAIClient
 
 _logger: Logger | None = None
-_openai_client: OpenAIClient | None = None
+_llm_client: LLMClient | None = None
 _analysis_service: AnalysisService | None = None
 
 
@@ -24,14 +32,57 @@ def get_logger() -> Logger:
     return _logger
 
 
-def get_openai_client() -> OpenAIClient:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = OpenAIClient(
-            client=OpenAI(api_key=os.environ["OPENAI_API_KEY"]),
+def _make_chat_model() -> BaseChatModel:
+    provider = os.environ.get("LLM_PROVIDER", "openai").lower()
+    model    = os.environ.get("LLM_MODEL",    "gpt-4o")
+
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            api_key=os.environ["OPENAI_API_KEY"],
+            max_tokens=8192,
+            temperature=0,
+            model_kwargs={"response_format": {"type": "json_object"}},
+        )
+
+    if provider == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=os.environ["GOOGLE_API_KEY"],
+            temperature=0,
+            max_output_tokens=8192,
+            generation_config={"response_mime_type": "application/json"},
+        )
+
+    if provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        # Anthropic has no JSON mode — rely on prompt-level instruction
+        return ChatAnthropic(
+            model=model,
+            api_key=os.environ["ANTHROPIC_API_KEY"],
+            max_tokens=8192,
+            temperature=0,
+        )
+
+    raise ValueError(
+        f"Unknown LLM_PROVIDER='{provider}'. "
+        "Supported: openai | google | anthropic"
+    )
+
+
+def get_llm_client() -> LLMClient:
+    global _llm_client
+    if _llm_client is None:
+        provider = os.environ.get("LLM_PROVIDER", "openai")
+        model    = os.environ.get("LLM_MODEL",    "gpt-4o")
+        get_logger().info("LLM initialised", provider=provider, model=model)
+        _llm_client = LLMClient(
+            model=_make_chat_model(),
             output_schema=json.dumps(AnalysisResult.model_json_schema(), indent=2),
         )
-    return _openai_client
+    return _llm_client
 
 
 def get_analysis_service() -> AnalysisService:
@@ -40,7 +91,7 @@ def get_analysis_service() -> AnalysisService:
         _analysis_service = AnalysisService(
             dicom_reader=DicomReader(),
             image_encoder=ImageEncoder(),
-            openai_client=get_openai_client(),
+            openai_client=get_llm_client(),   # interface unchanged
             logger=get_logger(),
         )
     return _analysis_service

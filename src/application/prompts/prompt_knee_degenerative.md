@@ -110,7 +110,7 @@ In degenerative knees without trauma, ligament tears are uncommon. Assess for:
 
 ## IMAGES
 
-Each slice is labeled `[Slice N]` — use these exact indices in `best_slice_indices`.
+Each image is labeled `[series_label | filename]` — use the exact filenames from the IMAGE MANIFEST in `best_slice_filenames`.
 
 - **Sagittal PD FS / T2 FS:** Cartilage, meniscal signal, bone marrow
 - **Sagittal T1:** Fracture lines, AVN rim, bone marrow characterization
@@ -167,7 +167,7 @@ Single valid JSON object — no markdown, no text outside JSON.
 - Synovium / effusion: **axial fat-saturated**
 - Patellar alignment: **axial**
 
-**best_slice_indices** — 2–3 indices where you actually saw the finding. Prove your conclusion — a reviewer should see exactly what you described.
+**best_slice_filenames** — 2–3 indices where you actually saw the finding. Prove your conclusion — a reviewer should see exactly what you described.
 
 **Required sections:**
 1. Ligaments (ACL, PCL)

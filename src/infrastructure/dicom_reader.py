@@ -12,8 +12,9 @@ class DicomReader:
             zf.extractall(target_dir)
         return target_dir
 
-    def load_series(self, dicom_dir: Path) -> dict[str, list[pydicom.Dataset]]:
-        series: dict[str, list[pydicom.Dataset]] = {}
+    def load_series(self, dicom_dir: Path) -> dict[str, list[tuple[str, pydicom.Dataset]]]:
+        """Returns dict[series_label, list[(filename, dataset)]] sorted by InstanceNumber."""
+        series: dict[str, list[tuple[str, pydicom.Dataset]]] = {}
 
         for path in sorted(dicom_dir.rglob("*")):
             if not path.is_file():
@@ -30,17 +31,17 @@ class DicomReader:
                 getattr(ds, "SeriesDescription", None)
                 or getattr(ds, "SeriesInstanceUID", "unknown")
             )
-            series.setdefault(label, []).append(ds)
+            series.setdefault(label, []).append((path.name, ds))
 
         for label in series:
-            series[label].sort(key=lambda ds: int(getattr(ds, "InstanceNumber", 0)))
+            series[label].sort(key=lambda item: int(getattr(item[1], "InstanceNumber", 0)))
 
         return series
 
-    def series_metadata(self, series: dict[str, list[pydicom.Dataset]]) -> list[dict]:
+    def series_metadata(self, series: dict[str, list[tuple[str, pydicom.Dataset]]]) -> list[dict]:
         result = []
         for label, slices in series.items():
-            ds = slices[0]
+            _, ds = slices[0]
             result.append({
                 "label": label,
                 "slices": len(slices),
@@ -50,21 +51,19 @@ class DicomReader:
             })
         return result
 
-    def extract_laterality(self, series: dict[str, list[pydicom.Dataset]]) -> str | None:
+    def extract_laterality(self, series: dict[str, list[tuple[str, pydicom.Dataset]]]) -> str | None:
         """
         Extract knee laterality from DICOM metadata tags or series descriptions.
         Returns 'Left', 'Right', or None if not determinable.
         """
         for slices in series.values():
-            for ds in slices[:3]:
-                # Standard DICOM laterality tags
+            for _, ds in slices[:3]:
                 for tag in ("Laterality", "ImageLaterality"):
                     val = str(getattr(ds, tag, "") or "").strip().upper()
                     if val in ("L", "LEFT"):
                         return "Left"
                     if val in ("R", "RIGHT"):
                         return "Right"
-                # Fall back to series description keywords
                 desc = str(getattr(ds, "SeriesDescription", "") or "").lower()
                 study = str(getattr(ds, "StudyDescription", "") or "").lower()
                 for text in (desc, study):
@@ -78,8 +77,66 @@ class DicomReader:
         lower = label.lower()
         return not any(kw in lower for kw in self.SKIP_KEYWORDS)
 
-    def select_slices(self, slices: list[pydicom.Dataset], n: int) -> list[pydicom.Dataset]:
-        if len(slices) <= n:
+    def select_slices(
+        self,
+        slices: list[tuple[str, pydicom.Dataset]],
+        n: int,
+        label: str = "",
+    ) -> list[tuple[str, pydicom.Dataset]]:
+        """
+        Select n representative slices from a series.
+
+        For sagittal series the ACL graft lives in the central ~30% of slices
+        (the intercondylar notch). Pure uniform sampling under-represents this zone
+        when n is small relative to total slices. Strategy:
+          - allocate ~40% of quota to the central third of the series
+          - distribute the remaining 60% uniformly across the full series
+          - deduplicate and sort by original order
+        For all other planes: uniform sampling.
+        """
+        total = len(slices)
+        if total <= n:
             return slices
-        indices = {round(i * (len(slices) - 1) / (n - 1)) for i in range(n)}
+
+        lower = label.lower()
+        # Sagittal: ACL graft in central slices (intercondylar notch)
+        # Coronal: ACL notch slices also in central third (anterior = soft tissue, posterior = popliteal)
+        is_sagittal = any(kw in lower for kw in ("sag", "sagital", "sagitt", "cruzado", "cruciate"))
+        is_coronal  = any(kw in lower for kw in ("cor", "coronal", "water", "fat:")) and not is_sagittal
+
+        if (is_sagittal or is_coronal) and total >= 9:
+            # Central zone: middle third of the series
+            c_start = total // 3
+            c_end   = 2 * total // 3
+            central = slices[c_start:c_end + 1]
+
+            # Budget: 40% for centre, rest uniform
+            n_central  = max(1, round(n * 0.40))
+            n_uniform  = n - n_central
+
+            # Centre samples
+            c_indices: set[int] = set()
+            if len(central) <= n_central:
+                c_indices = {c_start + i for i in range(len(central))}
+            else:
+                c_indices = {
+                    c_start + round(i * (len(central) - 1) / (n_central - 1))
+                    for i in range(n_central)
+                }
+
+            # Uniform samples across full series
+            u_indices = {
+                round(i * (total - 1) / (n_uniform - 1))
+                for i in range(n_uniform)
+            } if n_uniform > 1 else {0}
+
+            chosen = sorted(c_indices | u_indices)
+            # Trim if over-budget due to set union
+            while len(chosen) > n:
+                chosen.pop()
+
+            return [slices[i] for i in chosen]
+
+        # Non-sagittal — uniform sampling
+        indices = {round(i * (total - 1) / (n - 1)) for i in range(n)}
         return [slices[i] for i in sorted(indices)]

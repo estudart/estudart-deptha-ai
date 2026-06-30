@@ -8,7 +8,7 @@ from src.domain.models.report import Report
 from src.infrastructure.dicom_reader import DicomReader
 from src.infrastructure.image_encoder import ImageEncoder
 from src.infrastructure.logger import Logger
-from src.infrastructure.openai_client import OpenAIClient
+from src.infrastructure.llm_client import LLMClient as OpenAIClient  # alias — interface unchanged
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -17,6 +17,51 @@ _PROMPT_REGISTRY: dict[str, Path] = {
     "post_op":       _PROMPTS_DIR / "prompt_knee_postop.md",
     "degenerative":  _PROMPTS_DIR / "prompt_knee_degenerative.md",
 }
+
+# ---------------------------------------------------------------------------
+# Section → series routing
+#
+# Each entry: (section_title, [patterns])
+# A pattern is either:
+#   str       → single keyword that must appear in series label (case-insensitive)
+#   list[str] → all keywords must appear (AND logic)
+#
+# The section receives ONLY series whose label matches at least one pattern.
+# Order matters: first match wins when a series could fit multiple sections.
+# ---------------------------------------------------------------------------
+_SECTION_SERIES_ROUTING: list[tuple[str, list]] = [
+    ("Ligaments",                                       [["cor", "water"], ["cor", "pd"], "cruzado", "cruciate", "lca"]),
+    ("Medial and Lateral Corner",                       [["cor", "t1"], ["cor", "pd"], ["cor", "water"]]),
+    ("Menisci",                                         [["sag", "pd"], ["sag", "t2"], ["cor", "pd"], ["cor", "water"]]),
+    ("Articular Cartilage",                             [["sag", "pd"], ["cor", "pd"], ["cor", "water"]]),
+    ("Subchondral Bone and Bone Marrow",                [["sag", "t1"], ["sag", "pd"], ["sag", "t2"]]),
+    ("Extensor Mechanism and Hoffa's Fat Pad",          ["axi"]),
+    ("Joint Fluid, Synovium and Bursae",                ["axi"]),
+    ("Patellar Alignment and Periarticular Structures", ["axi"]),
+]
+
+
+def _series_matches(label: str, patterns: list) -> bool:
+    lower = label.lower()
+    for p in patterns:
+        if isinstance(p, str) and p in lower:
+            return True
+        if isinstance(p, list) and all(kw in lower for kw in p):
+            return True
+    return False
+
+
+def build_section_routing(
+    series_labels: list[str],
+) -> dict[str, list[str]]:
+    """
+    Returns {section_name: [series_label, ...]} for all sections.
+    A series may appear in multiple sections.
+    """
+    return {
+        section: [lbl for lbl in series_labels if _series_matches(lbl, patterns)]
+        for section, patterns in _SECTION_SERIES_ROUTING
+    }
 
 
 class AnalysisService:
@@ -64,7 +109,7 @@ class AnalysisService:
             metadata = self._dicom_reader.series_metadata(all_series)
 
             selected = {
-                label: self._dicom_reader.select_slices(slices, slices_per_series)
+                label: self._dicom_reader.select_slices(slices, slices_per_series, label)
                 for label, slices in all_series.items()
                 if self._dicom_reader.is_relevant(label)
             }
@@ -84,10 +129,24 @@ class AnalysisService:
             total_images = sum(len(v) for v in images.values())
             self._log.info("Encoding complete", total_images_encoded=total_images)
             if total_images > 80:
-                self._log.warning("Large image payload — GPT-4o may refuse or truncate", total_images=total_images, suggestion="reduce --slices")
+                self._log.warning(
+                    "Large image payload — GPT-4o may refuse or truncate",
+                    total_images=total_images,
+                    suggestion="reduce --slices",
+                )
+
+            # Build section routing so model knows which series to use per section
+            section_routing = build_section_routing(list(images.keys()))
+            self._log.info(
+                "Section routing built",
+                sections=len(section_routing),
+                routing={s: v for s, v in section_routing.items() if v},
+            )
 
             self._log.info("Sending request to GPT-4o vision", prompt=str(prompt_path), language=output_language)
-            raw = self._openai_client.call_vision(images, patient_context, prompt_path, output_language, laterality)
+            raw = self._openai_client.call_vision(
+                images, patient_context, prompt_path, output_language, laterality, section_routing
+            )
             analysis = AnalysisResult.model_validate(raw)
             self._log.info("GPT-4o response received", sections=len(analysis.sections))
 

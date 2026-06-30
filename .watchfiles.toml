@@ -1,0 +1,12 @@
+# Watchfiles config — exclude virtual env and generated output from file watching
+# This prevents uvicorn --reload from triggering on pip installs inside .venv
+
+[default]
+ignore_paths = [
+    ".venv",
+    "venv",
+    "data",
+    "__pycache__",
+    ".git",
+    "*.pyc",
+]

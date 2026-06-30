@@ -7,8 +7,12 @@ from PIL import Image
 
 
 class ImageEncoder:
-    def encode_series(self, series: dict[str, list[pydicom.Dataset]]) -> dict[str, list[str]]:
-        return {label: [self._to_base64_png(ds) for ds in slices] for label, slices in series.items()}
+    def encode_series(self, series: dict[str, list[tuple[str, pydicom.Dataset]]]) -> dict[str, dict[str, str]]:
+        """Returns dict[series_label, dict[filename, base64_png]]."""
+        return {
+            label: {filename: self._to_base64_png(ds) for filename, ds in slices}
+            for label, slices in series.items()
+        }
 
     def _to_base64_png(self, ds: pydicom.Dataset) -> str:
         arr = self._normalize(ds)

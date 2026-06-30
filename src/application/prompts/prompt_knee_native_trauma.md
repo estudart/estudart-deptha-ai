@@ -124,7 +124,7 @@ Never use generic "BMEL." Assign a specific diagnosis:
 
 ## IMAGES
 
-Each slice is labeled `[Slice N]` — use these exact indices in `best_slice_indices`.
+Each image is labeled `[series_label | filename]` — use the exact filenames from the IMAGE MANIFEST in `best_slice_filenames`.
 
 - **Sagittal PD FS / T2 FS:** ACL signal, meniscal tears, bone bruise, cartilage
 - **Sagittal T1:** Fracture lines, bone marrow characterization
@@ -185,7 +185,7 @@ Single valid JSON object — no markdown, no text outside JSON.
 - Synovium: **axial fat-saturated**
 - Patellar Alignment: **axial**
 
-**best_slice_indices** — 2–3 indices where you actually saw the finding. Prove your conclusion.
+**best_slice_filenames** — 2–3 indices where you actually saw the finding. Prove your conclusion.
 
 **Required sections:**
 1. Ligaments (ACL, PCL)

@@ -83,7 +83,7 @@ class Report:
     patient_context: str
     series_summaries: list[SeriesSummary]
     analysis: AnalysisResult
-    encoded_images: dict[str, list[str]] = field(default_factory=dict)
+    encoded_images: dict[str, dict[str, str]] = field(default_factory=dict)
     generated_at: datetime = field(default_factory=datetime.now)
 
     def save_to_dir(self, output_dir: Path) -> None:
@@ -286,25 +286,54 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ section card
 
-    def _resolve_images(self, section: Section, encoded_images: dict[str, list[str]]) -> list[io.BytesIO]:
+    def _resolve_images(self, section: Section, encoded_images: dict[str, dict[str, str]]) -> list[io.BytesIO]:
         if not encoded_images or not section.series_label:
             return []
-        key = next(
-            (k for k in encoded_images
-             if section.series_label.lower() in k.lower() or k.lower() in section.series_label.lower()),
-            None,
-        )
-        if not key:
+
+        # --- Series key resolution ---
+        # 1. Exact match
+        # 2. Model label is a substring of the key (or vice versa)
+        # 3. Score by token overlap — pick highest scorer
+        target = section.series_label.lower()
+        target_tokens = set(target.replace(":", " ").split())
+
+        def _score(k: str) -> int:
+            kl = k.lower()
+            if kl == target:
+                return 1000
+            if target in kl or kl in target:
+                return 100
+            k_tokens = set(kl.replace(":", " ").split())
+            return len(target_tokens & k_tokens)
+
+        key = max(encoded_images.keys(), key=_score, default=None)
+        if not key or _score(key) == 0:
             return []
-        slices  = encoded_images[key]
-        indices = section.best_slice_indices
-        if not indices:
-            mid     = len(slices) // 2
-            indices = [mid]
-        valid = [i for i in indices if 0 <= i < len(slices)][:3]
-        if not valid:
-            valid = [len(slices) // 2]
-        return [io.BytesIO(base64.b64decode(slices[i])) for i in valid]
+
+        slices_by_name = encoded_images[key]
+        filenames = section.best_slice_filenames
+        if filenames:
+            # look up by filename — exact match first, then fuzzy stem match
+            bufs = []
+            for fname in filenames[:3]:
+                if fname in slices_by_name:
+                    bufs.append(io.BytesIO(base64.b64decode(slices_by_name[fname])))
+                else:
+                    match = next(
+                        (k for k in slices_by_name
+                         if fname in k or k in fname or
+                         Path(fname).stem == Path(k).stem),
+                        None,
+                    )
+                    if match:
+                        bufs.append(io.BytesIO(base64.b64decode(slices_by_name[match])))
+            if bufs:
+                return bufs
+
+        # Fallback: middle slice of the resolved series
+        names = list(slices_by_name.keys())
+        mid = names[len(names) // 2]
+        return [io.BytesIO(base64.b64decode(slices_by_name[mid]))]
 
     _IMG_STRIP_H = 46  # height of image strip row
 
@@ -382,16 +411,23 @@ class _ReportPDF(FPDF):
         self.set_y(y_end)
         self.ln(4)
 
+    _N_IMG_SLOTS = 3  # always size images as if 3 are present — consistent look
+
     def _render_image_strip(self, img_bufs: list[io.BytesIO], text_w: float) -> None:
         n       = len(img_bufs)
         gap     = 3
         pad     = 2
-        # subtract pads from both outer edges so strip stays within card bounds
+        # strip area within card (inset by pad on each side)
         strip_w = text_w - pad * 2
-        img_w   = (strip_w - gap * (n - 1)) / n
+        # fixed slot width — always calculated for 3 slots so 1 or 2 images
+        # are the same size as when 3 are present (no ugly stretched rectangles)
+        img_w   = (strip_w - gap * (self._N_IMG_SLOTS - 1)) / self._N_IMG_SLOTS
         img_h   = self._IMG_STRIP_H
         strip_y = self.get_y() + 3
-        x0      = self.M + pad  # start inset by one pad
+
+        # centre the actual images horizontally within the strip
+        actual_w = n * img_w + (n - 1) * gap
+        x0 = self.M + pad + (strip_w - actual_w) / 2
 
         for i, buf in enumerate(img_bufs):
             x = x0 + i * (img_w + gap)
