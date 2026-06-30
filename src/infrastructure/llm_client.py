@@ -84,9 +84,6 @@ class LLMClient:
         raw = response.content
         if not raw or not raw.strip():
             raise ValueError("LLM returned an empty response. Payload may be too large.")
-        # Debug: log first 300 chars so we can see what the model actually returned
-        preview = raw.strip()[:300].replace("\n", " ")
-        import sys; print(f"[LLM raw preview] {preview}", file=sys.stderr)
         return self._extract_json(raw)
 
     # ------------------------------------------------------------------
