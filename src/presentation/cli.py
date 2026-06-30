@@ -12,9 +12,8 @@ load_dotenv()
 class CLI:
     def _parse_args(self) -> argparse.Namespace:
         parser = argparse.ArgumentParser(description="Deptha - AI MRI Analysis")
-        parser.add_argument("--input",    required=True, type=Path, help="DICOM zip or directory")
+        parser.add_argument("--input",    required=True, type=Path, help="DICOM folder or zip")
         parser.add_argument("--context",  required=True, type=str,  help="Patient clinical context")
-        parser.add_argument("--slices",   type=int,      default=5,  help="Slices per series (default: 5)")
         parser.add_argument("--language", type=str,      default="English", help="Output language (default: English)")
         return parser.parse_args()
 
@@ -29,7 +28,6 @@ class CLI:
         report  = service.run(
             input_path=args.input,
             patient_context=args.context,
-            slices_per_series=args.slices,
             output_language=args.language,
         )
 

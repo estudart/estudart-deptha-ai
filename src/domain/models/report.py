@@ -1,4 +1,3 @@
-import base64
 import io
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -83,7 +82,7 @@ class Report:
     patient_context: str
     series_summaries: list[SeriesSummary]
     analysis: AnalysisResult
-    encoded_images: dict[str, dict[str, str]] = field(default_factory=dict)
+    image_paths: dict[str, dict[str, str]] = field(default_factory=dict)  # {series: {path: path}}
     generated_at: datetime = field(default_factory=datetime.now)
 
     def save_to_dir(self, output_dir: Path) -> None:
@@ -166,7 +165,7 @@ class _ReportPDF(FPDF):
         self._section_header("3. DETAILED FINDINGS")
 
         for sec in report.analysis.sections:
-            self._section_card(sec, self._resolve_images(sec, report.encoded_images))
+            self._section_card(sec, self._resolve_images(sec, report.image_paths))
 
         self._summary_section(report.analysis.summary)
         self._clinical_answer(report.analysis.clinical_answer)
@@ -286,58 +285,44 @@ class _ReportPDF(FPDF):
 
     # ------------------------------------------------------------------ section card
 
-    def _resolve_images(self, section: Section, encoded_images: dict[str, dict[str, str]]) -> list[io.BytesIO]:
-        if not encoded_images:
-            return []
+    def _resolve_images(self, section: Section, image_paths: dict[str, dict[str, str]]) -> list[io.BytesIO]:
+        """
+        Load images for a section from disk using the paths the agent recorded.
 
-        # Build a flat lookup: filename → b64 across ALL series
-        all_files: dict[str, str] = {}
-        for slices in encoded_images.values():
-            all_files.update(slices)
-
-        # --- Series key resolution (used for fallback ordering only) ---
-        if section.series_label:
-            target = section.series_label.lower()
-            target_tokens = set(target.replace(":", " ").split())
-
-            def _score(k: str) -> int:
-                kl = k.lower()
-                if kl == target:
-                    return 1000
-                if target in kl or kl in target:
-                    return 100
-                k_tokens = set(kl.replace(":", " ").split())
-                return len(target_tokens & k_tokens)
-
-            best_key = max(encoded_images.keys(), key=_score, default=None)
-            primary_slices = encoded_images.get(best_key, {}) if best_key else {}
-        else:
-            primary_slices = next(iter(encoded_images.values()), {})
-
-        # --- Filename lookup across ALL series ---
-        filenames = section.best_slice_filenames or []
+        section.images_used contains absolute file paths written by the agent.
+        image_paths (from Report.image_paths) is used as a fallback index when
+        the section has no images_used entries.
+        """
         bufs: list[io.BytesIO] = []
-        for fname in filenames[:3]:
-            # Exact match anywhere
-            if fname in all_files:
-                bufs.append(io.BytesIO(base64.b64decode(all_files[fname])))
-            else:
-                # Fuzzy stem match anywhere
-                match = next(
-                    (k for k in all_files
-                     if fname in k or k in fname or Path(fname).stem == Path(k).stem),
-                    None,
-                )
-                if match:
-                    bufs.append(io.BytesIO(base64.b64decode(all_files[match])))
+
+        # Primary: paths the agent explicitly recorded for this section
+        for file_path in (section.images_used or [])[:3]:
+            p = Path(file_path)
+            if p.exists():
+                bufs.append(self._image_path_to_buf(p))
         if bufs:
             return bufs
 
-        # Final fallback: 3 central slices from the primary series
-        names = list(primary_slices.keys()) or list(all_files.keys())
-        mid = len(names) // 2
-        chosen = names[max(0, mid - 1): mid + 2]
-        return [io.BytesIO(base64.b64decode(all_files[n])) for n in chosen if n in all_files]
+        # Fallback: pick 3 central images from any section in image_paths
+        all_paths: list[str] = [
+            path
+            for section_dict in image_paths.values()
+            for path in section_dict
+            if not path.endswith(":b64")
+        ]
+        mid = len(all_paths) // 2
+        for path in all_paths[max(0, mid - 1): mid + 2]:
+            p = Path(path)
+            if p.exists():
+                bufs.append(self._image_path_to_buf(p))
+        return bufs
+
+    @staticmethod
+    def _image_path_to_buf(path: Path) -> io.BytesIO:
+        """Read an image file (JPEG, PNG) from disk and return a BytesIO."""
+        buf = io.BytesIO(path.read_bytes())
+        buf.seek(0)
+        return buf
 
     _IMG_STRIP_H = 46  # height of image strip row
 

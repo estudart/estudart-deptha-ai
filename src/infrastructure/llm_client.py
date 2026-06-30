@@ -1,5 +1,7 @@
 """
-LLM client — provider-agnostic via LangChain.
+LLM client — patient classification only.
+
+Vision analysis is handled by MriAnalysisAgent (application layer).
 
 Switch models with env vars only, zero code changes:
   LLM_PROVIDER = openai | google | anthropic
@@ -7,20 +9,14 @@ Switch models with env vars only, zero code changes:
 """
 
 import json
-from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 
 class LLMClient:
-    def __init__(self, model: BaseChatModel, output_schema: str) -> None:
+    def __init__(self, model: BaseChatModel) -> None:
         self._model = model
-        self._output_schema = output_schema
-
-    # ------------------------------------------------------------------
-    # Stage 1 — patient classification
-    # ------------------------------------------------------------------
 
     def classify_patient(self, patient_context: str) -> str:
         """Returns one of: 'post_op' | 'native_trauma' | 'degenerative'"""
@@ -51,191 +47,3 @@ class LLMClient:
             if "degenerative" in lower:
                 return "degenerative"
             return "native_trauma"
-
-    # ------------------------------------------------------------------
-    # Stage 2 — full vision analysis (single call, all images)
-    # ------------------------------------------------------------------
-
-    def call_vision(
-        self,
-        images_by_series: dict[str, dict[str, str]],
-        patient_context: str,
-        prompt_path: Path | None = None,
-        output_language: str = "English",
-        laterality: str | None = None,
-        section_routing: dict[str, list[str]] | None = None,
-    ) -> dict:
-        prompt = self._load_prompt(prompt_path)
-        content = self._build_content(
-            prompt, patient_context, images_by_series,
-            output_language, laterality, section_routing,
-        )
-        system_msg = (
-            f"You are DepthAI, an advanced medical imaging AI assistant specialized in "
-            f"musculoskeletal MRI analysis. "
-            f"IMPORTANT: All text in your JSON response MUST be written in {output_language}. "
-            f"Respond with a single valid JSON object — no markdown, no text outside JSON."
-        )
-        response = self._model.invoke([
-            SystemMessage(content=system_msg),
-            HumanMessage(content=content),
-        ])
-        raw = response.content
-        if not raw or not raw.strip():
-            raise ValueError("LLM returned an empty response. Payload may be too large.")
-        return self._extract_json(raw)
-
-    # ------------------------------------------------------------------
-    # Content builder
-    # ------------------------------------------------------------------
-
-    def _build_content(
-        self,
-        prompt: str,
-        patient_context: str,
-        images_by_series: dict[str, dict[str, str]],
-        output_language: str = "English",
-        laterality: str | None = None,
-        section_routing: dict[str, list[str]] | None = None,
-    ) -> list[dict]:
-        schema_block = (
-            "OUTPUT SCHEMA (JSON Schema — for reference only):\n"
-            "Respond with a single JSON *instance* that validates against this schema. "
-            "Do NOT return the schema itself.\n\n"
-            + self._output_schema
-        )
-        filled = (
-            prompt
-            .replace("{patient_context}", patient_context)
-            .replace("{output_schema}", schema_block)
-        )
-        content: list[dict] = [{"type": "text", "text": filled}]
-
-        # Laterality
-        if laterality:
-            if laterality == "Left":
-                note = (
-                    "CONFIRMED FROM DICOM METADATA — THIS IS A LEFT KNEE. "
-                    "On coronal images: MEDIAL compartment is on the viewer's LEFT, "
-                    "LATERAL compartment (fibular head, LCL) is on the viewer's RIGHT. "
-                    "This is authoritative — do not override based on visual guessing."
-                )
-            else:
-                note = (
-                    "CONFIRMED FROM DICOM METADATA — THIS IS A RIGHT KNEE. "
-                    "On coronal images: MEDIAL compartment is on the viewer's RIGHT, "
-                    "LATERAL compartment (fibular head, LCL) is on the viewer's LEFT. "
-                    "This is authoritative — do not override based on visual guessing."
-                )
-            content.append({"type": "text", "text": note})
-
-        # Language enforcement
-        content.append({"type": "text", "text": (
-            f"LANGUAGE REQUIREMENT — MANDATORY: Every text field in your JSON response "
-            f"MUST be written in {output_language}. No other language."
-        )})
-
-        # Image manifest
-        manifest: dict = {
-            "series_filenames": {
-                label: list(slices.keys())
-                for label, slices in images_by_series.items()
-            }
-        }
-        if section_routing:
-            manifest["section_routing"] = section_routing
-
-        routing_instruction = ""
-        if section_routing:
-            routing_instruction = (
-                "\n\nSECTION IMAGE ROUTING — MANDATORY:\n"
-                "The manifest contains a 'section_routing' map. "
-                "For each section in your JSON response:\n"
-                "  - series_label MUST be one of the series listed for that section\n"
-                "  - best_slice_filenames MUST be filenames from that section's series only\n"
-                "Do NOT use a series from another section's routing."
-            )
-
-        content.append({
-            "type": "text",
-            "text": (
-                "IMAGE MANIFEST:\n"
-                + json.dumps(manifest, indent=2)
-                + "\n\nEach image below is labeled [series_label | filename]."
-                + routing_instruction
-            ),
-        })
-
-        # Images — each sent once, grouped by section
-        if section_routing:
-            series_to_section: dict[str, str] = {}
-            for section_name, series_labels in section_routing.items():
-                for lbl in series_labels:
-                    if lbl not in series_to_section:
-                        series_to_section[lbl] = section_name
-
-            from collections import defaultdict
-            section_series: dict[str, list[str]] = defaultdict(list)
-            for lbl in images_by_series:
-                sec = series_to_section.get(lbl, "Other")
-                section_series[sec].append(lbl)
-
-            for section_name, series_labels in section_routing.items():
-                group = section_series.get(section_name, [])
-                if not group:
-                    continue
-                content.append({"type": "text", "text": (
-                    f"\n{'='*60}\n"
-                    f"SECTION: {section_name}\n"
-                    f"{'='*60}"
-                )})
-                for label in group:
-                    for filename, b64 in images_by_series[label].items():
-                        content.append({"type": "text", "text": f"[{label} | {filename}]"})
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "auto"},
-                        })
-        else:
-            for label, slices_by_name in images_by_series.items():
-                for filename, b64 in slices_by_name.items():
-                    content.append({"type": "text", "text": f"[{label} | {filename}]"})
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}", "detail": "auto"},
-                    })
-
-        return content
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _extract_json(self, raw: str) -> dict:
-        """Robustly extract a JSON object — handles markdown fences and trailing text."""
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-            raw = raw.strip()
-        start = raw.find("{")
-        if start == -1:
-            raise ValueError("No JSON object found in LLM response.")
-        depth, end = 0, -1
-        for i, ch in enumerate(raw[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        if end == -1:
-            raise ValueError("Unterminated JSON object in LLM response.")
-        return json.loads(raw[start:end + 1])
-
-    def _load_prompt(self, prompt_path: Path | None) -> str:
-        if prompt_path and prompt_path.exists():
-            return prompt_path.read_text(encoding="utf-8")
-        raise FileNotFoundError(f"Prompt not found: {prompt_path}")

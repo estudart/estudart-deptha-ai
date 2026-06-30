@@ -1,14 +1,15 @@
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 
+from src.application.agents.mri_analysis_agent import MriAnalysisAgent
 from src.application.entities.analysis_result import AnalysisResult
 from src.application.entities.series_summary import SeriesSummary
+from src.application.services.exam_organiser import ExamOrganiser
 from src.domain.models.report import Report
-from src.infrastructure.dicom_reader import DicomReader
-from src.infrastructure.image_encoder import ImageEncoder
-from src.infrastructure.logger import Logger
 from src.infrastructure.llm_client import LLMClient
+from src.infrastructure.logger import Logger
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -18,147 +19,87 @@ _PROMPT_REGISTRY: dict[str, Path] = {
     "degenerative":  _PROMPTS_DIR / "prompt_knee_degenerative.md",
 }
 
-# ---------------------------------------------------------------------------
-# Section → series routing
-#
-# Each entry: (section_title, [patterns])
-# A pattern is either:
-#   str       → single keyword that must appear in series label (case-insensitive)
-#   list[str] → all keywords must appear (AND logic)
-#
-# The section receives ONLY series whose label matches at least one pattern.
-# Order matters: first match wins when a series could fit multiple sections.
-# ---------------------------------------------------------------------------
-_SECTION_SERIES_ROUTING: list[tuple[str, list]] = [
-    ("Ligaments",                                       [["cor", "water"], ["cor", "pd"], "cruzado", "cruciate", "lca"]),
-    ("Medial and Lateral Corner",                       [["cor", "t1"], ["cor", "pd"], ["cor", "water"]]),
-    ("Menisci",                                         [["sag", "pd"], ["sag", "t2"], ["cor", "pd"], ["cor", "water"]]),
-    ("Articular Cartilage",                             [["sag", "pd"], ["cor", "pd"], ["cor", "water"]]),
-    ("Subchondral Bone and Bone Marrow",                [["sag", "t1"], ["sag", "pd"], ["sag", "t2"]]),
-    ("Extensor Mechanism and Hoffa's Fat Pad",          ["axi"]),
-    ("Joint Fluid, Synovium and Bursae",                ["axi"]),
-    ("Patellar Alignment and Periarticular Structures", ["axi"]),
-]
-
-
-def _series_matches(label: str, patterns: list) -> bool:
-    lower = label.lower()
-    for p in patterns:
-        if isinstance(p, str) and p in lower:
-            return True
-        if isinstance(p, list) and all(kw in lower for kw in p):
-            return True
-    return False
-
-
-def build_section_routing(
-    series_labels: list[str],
-) -> dict[str, list[str]]:
-    """
-    Returns {section_name: [series_label, ...]} for all sections.
-    A series may appear in multiple sections.
-    """
-    return {
-        section: [lbl for lbl in series_labels if _series_matches(lbl, patterns)]
-        for section, patterns in _SECTION_SERIES_ROUTING
-    }
-
 
 class AnalysisService:
     def __init__(
         self,
-        dicom_reader: DicomReader,
-        image_encoder: ImageEncoder,
         llm_client: LLMClient,
+        exam_organiser: ExamOrganiser,
+        agent: MriAnalysisAgent,
         logger: Logger,
     ) -> None:
-        self._dicom_reader = dicom_reader
-        self._image_encoder = image_encoder
-        self._llm_client = llm_client
-        self._log = logger
+        self._llm_client     = llm_client
+        self._exam_organiser = exam_organiser
+        self._agent          = agent
+        self._log            = logger
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_input(self, input_path: Path) -> tuple[Path, Path | None]:
+        """Unzip if needed. Returns (exam_dir, tmp_dir_or_None)."""
+        if input_path.suffix.lower() == ".zip":
+            tmp = Path(tempfile.mkdtemp(prefix="deptha_"))
+            self._log.info("Extracting zip archive", zip=str(input_path), tmp=str(tmp))
+            with zipfile.ZipFile(input_path) as zf:
+                zf.extractall(tmp)
+            return tmp, tmp
+        return input_path, None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def run(
         self,
         input_path: Path,
         patient_context: str,
-        slices_per_series: int = 8,
         output_language: str = "English",
     ) -> Report:
         tmp_dir = None
 
         try:
-            self._log.info("Pipeline started", input=str(input_path), slices_per_series=slices_per_series)
+            self._log.info("Pipeline started", input=str(input_path))
 
-            # Stage 1 — classify patient profile and select prompt
+            # Stage 1 — classify patient profile, select prompt
             profile     = self._llm_client.classify_patient(patient_context)
             prompt_path = _PROMPT_REGISTRY.get(profile, _PROMPT_REGISTRY["native_trauma"])
             self._log.info("Patient classified", profile=profile, prompt=prompt_path.name)
 
-            dicom_dir, tmp_dir = self._resolve_input(input_path)
-            self._log.info("Input resolved", dicom_dir=str(dicom_dir))
+            exam_dir, tmp_dir = self._resolve_input(input_path)
 
-            all_series = self._dicom_reader.load_series(dicom_dir)
-            self._log.info("DICOM series loaded", total_series=len(all_series))
+            # Stage 2 — organise JPEGs into section folders (idempotent)
+            #           also extracts laterality + series metadata from DICOMDIR
+            organised = self._exam_organiser.organise(exam_dir)
 
-            # Extract laterality from DICOM metadata
-            laterality = self._dicom_reader.extract_laterality(all_series)
-            self._log.info("Laterality extracted", laterality=laterality or "unknown")
-            for label, slices in all_series.items():
-                self._log.info("  series found", label=label, slices=len(slices))
-
-            metadata = self._dicom_reader.series_metadata(all_series)
-
-            selected = {
-                label: self._dicom_reader.select_slices(slices, slices_per_series, label)
-                for label, slices in all_series.items()
-                if self._dicom_reader.is_relevant(label)
-            }
-
-            skipped = set(all_series) - set(selected)
-            self._log.info(
-                "Series filtered",
-                relevant=len(selected),
-                skipped=len(skipped),
-                skipped_labels=", ".join(skipped) or "none",
-            )
-            for label, slices in selected.items():
-                self._log.info("  selected", label=label, slices_sampled=len(slices))
-
-            self._log.info("Encoding slices to base64 PNG")
-            images = self._image_encoder.encode_series(selected)
-            total_images = sum(len(v) for v in images.values())
-            self._log.info("Encoding complete", total_images_encoded=total_images)
-            if total_images > 80:
-                self._log.warning(
-                    "Large image payload — LLM may refuse or truncate",
-                    total_images=total_images,
-                    suggestion="reduce --slices",
-                )
-
-            # Build section routing so model knows which series to use per section
-            section_routing = build_section_routing(list(images.keys()))
-            self._log.info(
-                "Section routing built",
-                sections=len(section_routing),
-                routing={s: v for s, v in section_routing.items() if v},
-            )
-
-            # Stage 2 — full vision analysis
-            self._log.info("Sending request to LLM vision", prompt=str(prompt_path), language=output_language)
-            raw = self._llm_client.call_vision(
-                images, patient_context, prompt_path, output_language, laterality, section_routing,
+            # Stage 3 — agent explores organised folder, returns structured analysis
+            self._log.info("Agent starting", prompt=prompt_path.name, language=output_language)
+            raw, images_used = self._agent.run(
+                organised_dir=organised.organised_dir,
+                patient_context=patient_context,
+                prompt_path=prompt_path,
+                output_language=output_language,
+                laterality=organised.laterality,
             )
             analysis = AnalysisResult.model_validate(raw)
-            self._log.info("LLM response received", sections=len(analysis.sections))
+            self._log.info(
+                "Agent complete",
+                sections=len(analysis.sections),
+                sections_with_images=sum(1 for s in analysis.sections if s.images_used),
+            )
 
             summaries = [
                 SeriesSummary(
                     label=m["label"],
                     slices_total=m["slices"],
-                    slices_analysed=len(selected.get(m["label"], [])),
+                    slices_analysed=sum(
+                        1 for sec in images_used.values()
+                        for p in sec if not p.endswith(":b64")
+                    ),
                     modality=m["modality"],
                 )
-                for m in metadata
+                for m in organised.series_metadata
             ]
 
             self._log.info("Pipeline complete", series_in_report=len(summaries))
@@ -167,7 +108,7 @@ class AnalysisService:
                 patient_context=patient_context,
                 series_summaries=summaries,
                 analysis=analysis,
-                encoded_images=images,
+                image_paths=images_used,
             )
 
         except Exception as exc:
@@ -178,10 +119,3 @@ class AnalysisService:
             if tmp_dir and tmp_dir.exists():
                 shutil.rmtree(tmp_dir)
                 self._log.info("Temp directory cleaned up", path=str(tmp_dir))
-
-    def _resolve_input(self, input_path: Path) -> tuple[Path, Path | None]:
-        if input_path.suffix.lower() == ".zip":
-            tmp = Path(tempfile.mkdtemp(prefix="deptha_"))
-            self._log.info("Extracting zip archive", zip=str(input_path), tmp=str(tmp))
-            return self._dicom_reader.extract_zip(input_path, tmp), tmp
-        return input_path, None
