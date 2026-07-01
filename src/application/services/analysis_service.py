@@ -26,15 +26,17 @@ from src.infrastructure.logger import Logger
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts" / "sections"
 
-# Maps section folder slug → section prompt file
+# Maps image-folder slug → clean prompt file name.
+# Keys are the organised folder names on disk (01_ligaments/ etc.);
+# values point to the prompt files which carry no numeric prefix.
 _SECTION_PROMPTS: dict[str, Path] = {
-    "01_ligaments":            _PROMPTS_DIR / "01_ligaments.md",
-    "02_menisci":              _PROMPTS_DIR / "02_menisci.md",
-    "03_articular_cartilage":  _PROMPTS_DIR / "03_articular_cartilage.md",
-    "04_subchondral_bone":     _PROMPTS_DIR / "04_subchondral_bone.md",
-    "05_extensor_mechanism":   _PROMPTS_DIR / "05_extensor_mechanism.md",
-    "06_joint_fluid":          _PROMPTS_DIR / "06_joint_fluid.md",
-    "07_patellar_alignment":   _PROMPTS_DIR / "07_patellar_alignment.md",
+    "01_ligaments":            _PROMPTS_DIR / "ligaments.md",
+    "02_menisci":              _PROMPTS_DIR / "menisci.md",
+    "03_articular_cartilage":  _PROMPTS_DIR / "articular_cartilage.md",
+    "04_subchondral_bone":     _PROMPTS_DIR / "subchondral_bone.md",
+    "05_extensor_mechanism":   _PROMPTS_DIR / "extensor_mechanism.md",
+    "06_joint_fluid":          _PROMPTS_DIR / "joint_fluid.md",
+    "07_patellar_alignment":   _PROMPTS_DIR / "patellar_alignment.md",
 }
 
 _DEFAULT_CLINICAL_QUESTION = (
