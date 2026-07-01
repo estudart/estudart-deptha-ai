@@ -176,6 +176,7 @@ class AnalysisService:
             return ExamReport(
                 patient_context   = patient_context,
                 clinical_question = clinical_question,
+                laterality        = None,
                 sections          = section_results,
                 synthesis         = synthesis,
             )

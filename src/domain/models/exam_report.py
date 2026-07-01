@@ -318,17 +318,19 @@ class _SectionPDF(_BasePDF):
             self.cell(self.epw, 5, f"LATERALITY (DICOM): {laterality.upper()} KNEE", ln=True)
             self.ln(2)
 
-        # Context box
+        # Context box — height is dynamic; left bar is drawn after we know it
         self._section_header("CLINICAL CONTEXT")
         x, y = self.M, self.get_y()
         ctx  = _clean(patient_context)
-        self.set_fill_color(*_CARD_BG)
-        self.set_fill_color(*_ACCENT_BLUE)
-        self.rect(x, y, 3, 30, "F")
         self.set_xy(x + 6, y + 3)
         self.set_font("Helvetica", "", 9)
         self.set_text_color(*_TEXT_PRIMARY)
         self.multi_cell(self.epw - 10, 5, ctx)
+        ctx_bottom = self.get_y()
+        bar_h = ctx_bottom - y + 3
+        self.set_fill_color(*_ACCENT_BLUE)
+        self.rect(x, y, 3, bar_h, "F")
+        self.set_y(ctx_bottom)
         self.ln(4)
 
         # Findings
@@ -364,11 +366,10 @@ class _SectionPDF(_BasePDF):
         self.set_font("Helvetica", "", 9)
         self.set_text_color(*_TEXT_PRIMARY)
         for finding in sub.findings:
-            bullet_y = self.get_y()
-            self.set_xy(x + 2, bullet_y)
-            self.cell(bullet_w, 5, "-")
-            self.set_xy(text_indent + 2, bullet_y)
-            self.multi_cell(self.epw - bullet_w - 12, 5, _clean(finding))
+            # Inline bullet — no separate cell() before multi_cell so page
+            # breaks can't strand the dash on the previous page.
+            self.set_x(x + 2)
+            self.multi_cell(self.epw - bullet_w - 10, 5, f"-  {_clean(finding)}")
         self.ln(2)
 
     def _render_reasoning(self, reasoning: str) -> None:
@@ -378,7 +379,10 @@ class _SectionPDF(_BasePDF):
         self.set_font("Helvetica", "I", 8.5)
         lines   = self._count_lines(_clean(reasoning), inner_w, 5)
         block_h = 5 + lines * 5 + pad
-        y       = self.get_y()
+        # Ensure the whole block fits on the current page
+        if self.get_y() + block_h > self.h - self.b_margin:
+            self.add_page()
+        y = self.get_y()
         self.set_fill_color(38, 38, 55)
         self.rect(x, y, self.epw - 8, block_h, "F")
         self.set_fill_color(*_ACCENT_BLUE)
@@ -391,7 +395,8 @@ class _SectionPDF(_BasePDF):
         self.set_font("Helvetica", "I", 8.5)
         self.set_text_color(*_TEXT_SECONDARY)
         self.multi_cell(inner_w, 5, _clean(reasoning), fill=False)
-        self.set_y(y + block_h + 2)
+        # Use whichever is further down — never rewind the cursor
+        self.set_y(max(self.get_y(), y + block_h) + 2)
 
     def _render_notes(self, notes: list[str]) -> None:
         x       = self.M + 6
@@ -399,7 +404,10 @@ class _SectionPDF(_BasePDF):
         inner_w = self.epw - 8 - pad * 2 - 5
         total_lines = sum(self._count_lines(_clean(n), inner_w, 5) for n in notes)
         block_h = 5 + total_lines * 5 + len(notes) * 2 + pad
-        y       = self.get_y()
+        # Ensure the whole block fits on the current page
+        if self.get_y() + block_h > self.h - self.b_margin:
+            self.add_page()
+        y = self.get_y()
         self.set_fill_color(28, 28, 42)
         self.rect(x, y, self.epw - 8, block_h, "F")
         self.set_fill_color(*_TEXT_LABEL)
@@ -411,13 +419,12 @@ class _SectionPDF(_BasePDF):
         self.set_font("Helvetica", "I", 8.5)
         self.set_text_color(*_TEXT_SECONDARY)
         for note in notes:
-            bullet_y = self.get_y()
-            self.set_xy(x + pad + 2, bullet_y)
-            self.cell(5, 5, "-")
-            self.set_xy(x + pad + 7, bullet_y)
-            self.multi_cell(inner_w, 5, _clean(note), fill=False)
+            # Inline bullet — avoids page-break orphan
+            self.set_x(x + pad + 2)
+            self.multi_cell(inner_w, 5, f"-  {_clean(note)}", fill=False)
             self.ln(1)
-        self.set_y(y + block_h + 2)
+        # Use whichever is further down — never rewind the cursor
+        self.set_y(max(self.get_y(), y + block_h) + 2)
 
     def _render_images(self, image_paths: list[str]) -> None:
         self._section_header("REPRESENTATIVE IMAGES")

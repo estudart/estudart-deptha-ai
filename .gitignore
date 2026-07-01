@@ -6,3 +6,4 @@ data/input/
 data/output/
 *.dcm
 *.zip
+.DS_Store
