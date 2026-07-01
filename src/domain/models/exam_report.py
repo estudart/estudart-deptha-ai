@@ -264,20 +264,25 @@ class _BasePDF(FPDF):
         self.ln(8)
 
     def _legal_footer(self) -> None:
-        self.ln(6)
+        # Disable auto page break so the footer never wraps onto a new blank page
+        # (set_y(-22) places us near the bottom margin where multi_cell would
+        # otherwise trigger a page break mid-sentence).
+        self.set_auto_page_break(False)
+        self.set_y(-22)
         self.set_draw_color(*_TEXT_LABEL)
         self.set_line_width(0.2)
         self.line(self.M, self.get_y(), 210 - self.M, self.get_y())
-        self.ln(3)
+        self.ln(2)
         self.set_x(self.M)
-        self.set_font("Helvetica", "I", 7.5)
+        self.set_font("Helvetica", "I", 7)
         self.set_text_color(*_TEXT_LABEL)
         self.multi_cell(
-            self.epw, 4.5,
+            self.epw, 4,
             "This report was generated with AI assistance (DepthAI). "
             "It does NOT replace an official radiological report by a licensed radiologist. "
             "All clinical decisions must be made exclusively by the responsible physician.",
         )
+        self.set_auto_page_break(True, margin=self.M)
 
 
 # ---------------------------------------------------------------------------
