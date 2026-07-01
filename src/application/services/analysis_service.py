@@ -2,33 +2,29 @@
 AnalysisService — orchestrates the full MRI analysis pipeline.
 
 Pipeline:
-  1. Classify patient profile → select starter prompt.
-  2. Organise exam into section folders.
-  3. Analyse each section in parallel (ThreadPoolExecutor) via SectionAnalyser.
-  4. Synthesise all section results into a final integrated report (SynthesisAnalyser).
-  5. Produce ExamReport with per-section PDFs + summary PDF.
+  1. Resolve section folders from the pre-organised input directory.
+  2. Analyse each section in parallel (ThreadPoolExecutor) via SectionAnalyser.
+  3. Synthesise all section results into a final integrated report (SynthesisAnalyser).
+  4. Return ExamReport.
+
+Input contract:
+  input_path must be a pre-organised directory containing section subfolders:
+    01_ligaments/  02_menisci/  03_articular_cartilage/ ...
+  OR a directory that contains an `organised/` subfolder with the same layout.
 
 No images leave the service — only structured text and file paths cross boundaries.
 """
 
-import shutil
-import tempfile
-import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from src.application.agents.section_analyser import SectionAnalyser
 from src.application.agents.synthesis_analyser import SynthesisAnalyser
 from src.application.entities.section_result import SectionResult
-from src.application.services.exam_organiser import ExamOrganiser
-from src.domain.models.exam_report import ExamReport
 from src.infrastructure.logger import Logger
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts" / "sections"
 
-# Maps image-folder slug → clean prompt file name.
-# Keys are the organised folder names on disk (01_ligaments/ etc.);
-# values point to the prompt files which carry no numeric prefix.
 _SECTION_PROMPTS: dict[str, Path] = {
     "01_ligaments":            _PROMPTS_DIR / "ligaments.md",
     "02_menisci":              _PROMPTS_DIR / "menisci.md",
@@ -44,18 +40,16 @@ _DEFAULT_CLINICAL_QUESTION = (
     "and what is the clinical significance?"
 )
 
-_MAX_WORKERS = 4  # concurrent section analyses (API rate-limit friendly)
+_MAX_WORKERS = 4
 
 
 class AnalysisService:
     def __init__(
         self,
-        exam_organiser: ExamOrganiser,
         section_analyser: SectionAnalyser,
         synthesis_analyser: SynthesisAnalyser,
         logger: Logger,
     ) -> None:
-        self._exam_organiser     = exam_organiser
         self._section_analyser   = section_analyser
         self._synthesis_analyser = synthesis_analyser
         self._log                = logger
@@ -64,14 +58,19 @@ class AnalysisService:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _resolve_input(self, input_path: Path) -> tuple[Path, Path | None]:
-        if input_path.suffix.lower() == ".zip":
-            tmp = Path(tempfile.mkdtemp(prefix="deptha_"))
-            self._log.info("Extracting zip archive", zip=str(input_path), tmp=str(tmp))
-            with zipfile.ZipFile(input_path) as zf:
-                zf.extractall(tmp)
-            return tmp, tmp
-        return input_path, None
+    def _resolve_organised_dir(self, input_path: Path) -> Path:
+        """
+        Accept either:
+          - data/input/exam_pos/organised/   (already pointing at section folders)
+          - data/input/exam_pos              (contains an `organised/` subfolder)
+        """
+        organised = input_path / "organised"
+        if organised.is_dir():
+            self._log.info("Using organised/ subfolder", path=str(organised))
+            return organised
+        if input_path.is_dir():
+            return input_path
+        raise ValueError(f"Input path does not exist or is not a directory: {input_path}")
 
     def _load_prompt(self, section_slug: str) -> str:
         path = _SECTION_PROMPTS.get(section_slug)
@@ -89,7 +88,6 @@ class AnalysisService:
         section_dir: Path,
         patient_context: str,
         output_language: str,
-        laterality: str | None,
     ) -> SectionResult:
         section_slug   = section_dir.name
         section_prompt = self._load_prompt(section_slug)
@@ -98,7 +96,6 @@ class AnalysisService:
             section_prompt  = section_prompt,
             patient_context = patient_context,
             output_language = output_language,
-            laterality      = laterality,
         )
 
     # ------------------------------------------------------------------
@@ -111,28 +108,30 @@ class AnalysisService:
         patient_context: str,
         output_language: str = "English",
         clinical_question: str = _DEFAULT_CLINICAL_QUESTION,
-    ) -> ExamReport:
-        tmp_dir = None
+    ) -> "ExamReport":
+        from src.domain.models.exam_report import ExamReport
+
         try:
             self._log.info("Pipeline started", input=str(input_path))
 
-            exam_dir, tmp_dir = self._resolve_input(input_path)
+            organised_dir = self._resolve_organised_dir(input_path)
 
-            # Stage 1 — organise into section folders
-            organised = self._exam_organiser.organise(exam_dir)
-            organised_dir = organised.organised_dir
-            laterality    = organised.laterality
-
-            self._log.info("Exam organised", laterality=laterality, sections=len(_SECTION_PROMPTS))
-
-            # Stage 2 — discover section folders that have images
+            # Discover section folders that contain images
             section_dirs = sorted(
                 d for d in organised_dir.iterdir()
-                if d.is_dir() and any(d.iterdir())
+                if d.is_dir() and any(
+                    f for f in d.iterdir() if f.suffix in {".jpg", ".jpeg", ".png"}
+                )
             )
-            self._log.info("Sections with images", count=len(section_dirs))
+            self._log.info("Sections found", count=len(section_dirs))
 
-            # Stage 3 — parallel section analysis
+            if not section_dirs:
+                raise ValueError(
+                    f"No section folders with images found in: {organised_dir}\n"
+                    "Expected subdirectories named 01_ligaments/, 02_menisci/, etc."
+                )
+
+            # Parallel section analysis
             section_results: list[SectionResult] = []
             failed: list[str] = []
 
@@ -143,7 +142,6 @@ class AnalysisService:
                         sec_dir,
                         patient_context,
                         output_language,
-                        laterality,
                     ): sec_dir.name
                     for sec_dir in section_dirs
                 }
@@ -152,16 +150,11 @@ class AnalysisService:
                     try:
                         result = future.result()
                         section_results.append(result)
-                        self._log.info(
-                            "Section complete",
-                            section=sec_name,
-                            status=result.status,
-                        )
+                        self._log.info("Section complete", section=sec_name, status=result.status)
                     except Exception as exc:
                         self._log.error("Section failed", section=sec_name, error=str(exc))
                         failed.append(sec_name)
 
-            # Sort by folder name so output order is deterministic
             section_results.sort(key=lambda r: r.section_folder)
 
             if not section_results:
@@ -170,7 +163,7 @@ class AnalysisService:
             if failed:
                 self._log.warning("Some sections failed", failed=failed)
 
-            # Stage 4 — synthesis (text only, no images)
+            # Synthesis
             synthesis = self._synthesis_analyser.synthesise(
                 sections          = section_results,
                 patient_context   = patient_context,
@@ -181,18 +174,12 @@ class AnalysisService:
             self._log.info("Synthesis complete", flags=len(synthesis.flags))
 
             return ExamReport(
-                patient_context    = patient_context,
-                clinical_question  = clinical_question,
-                laterality         = laterality,
-                sections           = section_results,
-                synthesis          = synthesis,
+                patient_context   = patient_context,
+                clinical_question = clinical_question,
+                sections          = section_results,
+                synthesis         = synthesis,
             )
 
         except Exception as exc:
             self._log.error("Pipeline failed", error=str(exc))
             raise
-
-        finally:
-            if tmp_dir and tmp_dir.exists():
-                shutil.rmtree(tmp_dir)
-                self._log.info("Temp directory cleaned up", path=str(tmp_dir))
