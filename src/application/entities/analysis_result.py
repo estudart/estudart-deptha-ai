@@ -10,21 +10,14 @@ class Subsection(BaseModel):
 
 class Section(BaseModel):
     title: str = Field(description="Anatomical section name (e.g. 'Ligaments', 'Menisci').")
-    series_label: str | None = Field(
-        default=None,
+    images_used: list[str] = Field(
+        default=[],
         description=(
-            "Exact label of the MRI series that best shows this section's structures, "
-            "as it appears in the image list (e.g. 'WATER: COR PD FSE FLEX'). "
-            "Prefer sagittal for ligaments/cartilage/bone, coronal for meniscal body/extrusion, axial for synovium."
-        ),
-    )
-    best_slice_filenames: list[str] | None = Field(
-        default=None,
-        description=(
-            "List of 2–3 filenames from the IMAGE MANIFEST that best demonstrate the key findings "
-            "for this section. Use the exact filenames as they appear in the manifest and image labels. "
-            "Order by diagnostic importance — most important first. These must be the images where "
-            "you actually saw the finding you described — not random or representative slices."
+            "Absolute file paths of the images you fetched and examined for this section, "
+            "exactly as returned by get_images in the 'fetched_paths' field. "
+            "Include every path you actually looked at — these are used by the report builder "
+            "to render the images. Order by diagnostic importance (most relevant first). "
+            "2-3 paths is ideal."
         ),
     )
     status: Literal["normal", "attention", "significant"] = Field(
